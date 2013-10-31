@@ -25,6 +25,21 @@ describe('mondis', function()
       end)
     end)
 
+    describe(':getCollection', function()
+      describe('when the collection does not exist', function()
+        it('focus returns an empty collection', function()
+          local col = db:getCollection('users')
+          assert.is_false(col:exists())
+        end)
+      end)
+      describe('when the collection exists', function()
+        it('focus returns an empty collection', function()
+          local col = db:createCollection('users')
+          assert.is_true(col:exists())
+        end)
+      end)
+    end)
+
   end)
 
 

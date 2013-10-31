@@ -27,6 +27,22 @@ local mondis = {
   ]]
 }
 
+local Collection = {}
+local Collection_mt = {__index = Collection}
+
+local function newCollection(db, name)
+  return setmetatable({
+    db = db,
+    name = name
+  }, Collection_mt)
+end
+
+function Collection:exists()
+  return self.db.red:sismember(self.db.prefix .. '/cols', self.name)
+end
+
+----------------------------------------------------------
+
 local DB = {}
 local DB_mt = { __index = DB }
 
@@ -40,20 +56,29 @@ function DB:dropDatabase()
 end
 
 function DB:getCollectionNames()
-  local names = assert(self.red:smembers(self.prefix .. '/collection_names'))
+  local names = assert(self.red:smembers(self.prefix .. '/cols'))
   table.sort(names)
   return names
 end
 
 function DB:createCollection(collection)
-  assert(self.red:sadd(self.prefix .. '/collection_names', collection))
+  assert(self.red:sadd(self.prefix .. '/cols', collection))
+  return self:getCollection(collection)
 end
+
+function DB:getCollection(collection)
+  self.collections[collection] = self.collections[collection] or newCollection(self, collection)
+  return self.collections[collection]
+end
+
+----------------------------------------------------------
 
 function mondis.connect(red, options)
   options = options or {}
   return setmetatable({
-    red    = red,
-    prefix = options.prefix or 'mondis'
+    red         = red,
+    prefix      = options.prefix or 'mondis',
+    collections = {}
   }, DB_mt)
 end
 
