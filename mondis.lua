@@ -44,7 +44,12 @@ end
 ----------------------------------------------------------
 
 local DB = {}
-local DB_mt = { __index = DB }
+local DB_mt = {
+  __index = function(self, method)
+    if DB[method] then return DB[method] end
+    return self:getCollection(method)
+  end
+}
 
 function DB:dropDatabase()
   local script = ([[
@@ -63,12 +68,12 @@ end
 
 function DB:createCollection(collection)
   assert(self.red:sadd(self.prefix .. '/cols', collection))
-  return self:getCollection(collection)
+  self.collections[collection] = self.collections[collection] or newCollection(self, collection)
+  return self.collections[collection]
 end
 
 function DB:getCollection(collection)
-  self.collections[collection] = self.collections[collection] or newCollection(self, collection)
-  return self.collections[collection]
+  return self.collections[collection] or newCollection(self, collection)
 end
 
 ----------------------------------------------------------
