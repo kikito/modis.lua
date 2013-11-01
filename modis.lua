@@ -39,25 +39,25 @@ end
 
 local function markAsExisting(self)
   local db = self.db
-  assert(db.red:sadd(db.prefix .. '/cols', self.name))
+  assert(db.red:sadd(db.name .. '/cols', self.name))
   db.collections[self.name] = self
 end
 
 function Collection:exists()
   local db = self.db
-  return db.red:sismember(db.prefix .. '/cols', self.name)
+  return db.red:sismember(db.name .. '/cols', self.name)
 end
 
 function Collection:count()
   local db = self.db
-  return db.red:scard(db.prefix .. '/cols/' .. self.name .. '/items')
+  return db.red:scard(db.name .. '/cols/' .. self.name .. '/items')
 end
 
 function Collection:insert(doc)
   markAsExisting(self)
   local db = self.db
   local id = self:count() + 1
-  return db.red:sadd(db.prefix .. '/cols/' .. self.name .. '/items', id)
+  return db.red:sadd(db.name .. '/cols/' .. self.name .. '/items', id)
 end
 
 
@@ -76,12 +76,12 @@ function DB:dropDatabase()
     for _,k in ipairs(redis.call('keys', '%s/*')) do
       redis.call('del', k)
     end
-  ]]):format(self.prefix)
+  ]]):format(self.name)
   return self.red:eval(script, 0)
 end
 
 function DB:getCollectionNames()
-  local names = assert(self.red:smembers(self.prefix .. '/cols'))
+  local names = assert(self.red:smembers(self.name .. '/cols'))
   table.sort(names)
   return names
 end
@@ -96,13 +96,18 @@ function DB:getCollection(collection)
   return self.collections[collection] or newCollection(self, collection)
 end
 
+function DB:getInfo()
+  return {
+  }
+end
+
 ----------------------------------------------------------
 
 function modis.connect(red, options)
   options = options or {}
   return setmetatable({
-    red         = red,
-    prefix      = options.prefix or 'modis',
+    red       = red,
+    name      = options.name or 'modis',
     collections = {}
   }, DB_mt)
 end
