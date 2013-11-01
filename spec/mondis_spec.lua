@@ -70,6 +70,26 @@ describe('mondis', function()
       end)
     end)
 
+    describe(':count', function()
+      it('starts at 0', function()
+        assert.equals(0, db.users:count())
+      end)
+    end)
+
+    describe(':insert', function()
+      it('marks the table as existing', function()
+        db.users:insert({})
+        assert.is_true(db.users:exists())
+      end)
+      it('increases the count', function()
+        db.users:insert({})
+        db.users:insert({})
+        db.users:insert({})
+        assert.equals(3, db.users:count())
+      end)
+    end)
+
+
   end)
 end)
 

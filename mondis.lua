@@ -37,17 +37,37 @@ local function newCollection(db, name)
   }, Collection_mt)
 end
 
-function Collection:exists()
-  return self.db.red:sismember(self.db.prefix .. '/cols', self.name)
+local function markAsExisting(self)
+  local db = self.db
+  assert(db.red:sadd(db.prefix .. '/cols', self.name))
+  db.collections[self.name] = self
 end
+
+function Collection:exists()
+  local db = self.db
+  return db.red:sismember(db.prefix .. '/cols', self.name)
+end
+
+function Collection:count()
+  local db = self.db
+  return db.red:scard(db.prefix .. '/cols/' .. self.name .. '/items')
+end
+
+function Collection:insert(doc)
+  markAsExisting(self)
+  local db = self.db
+  local id = self:count() + 1
+  return db.red:sadd(db.prefix .. '/cols/' .. self.name .. '/items', id)
+end
+
 
 ----------------------------------------------------------
 
 local DB = {}
 local DB_mt = {
-  __index = function(self, method)
-    if DB[method] then return DB[method] end
-    return self:getCollection(method)
+  __index = function(self, key)
+    if DB[key] then return DB[key] end
+    return self:getCollection(key)
   end
 }
 
@@ -67,9 +87,9 @@ function DB:getCollectionNames()
 end
 
 function DB:createCollection(collection)
-  assert(self.red:sadd(self.prefix .. '/cols', collection))
-  self.collections[collection] = self.collections[collection] or newCollection(self, collection)
-  return self.collections[collection]
+  local col = self:getCollection(collection)
+  markAsExisting(col)
+  return col
 end
 
 function DB:getCollection(collection)
