@@ -1,11 +1,11 @@
-local mondis = require 'mondis'
+local modis = require 'modis'
 local redis = require 'redis'
 
-describe('mondis', function()
+describe('modis', function()
   local db, red
   before_each(function()
     red = redis.connect('127.0.0.1', 6379)
-    db  = mondis.connect(red)
+    db  = modis.connect(red)
   end)
   after_each(function()
     db:dropDatabase()

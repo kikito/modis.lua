@@ -1,5 +1,5 @@
-local mondis = {
-  _VERSION     = 'mondis v0.0.1',
+local modis = {
+  _VERSION     = 'modis v0.0.1',
   _DESCRIPTION = 'Mongo Query Language on top of redis for Lua',
   _LICENSE     = [[
     MIT LICENSE
@@ -98,13 +98,13 @@ end
 
 ----------------------------------------------------------
 
-function mondis.connect(red, options)
+function modis.connect(red, options)
   options = options or {}
   return setmetatable({
     red         = red,
-    prefix      = options.prefix or 'mondis',
+    prefix      = options.prefix or 'modis',
     collections = {}
   }, DB_mt)
 end
 
-return mondis
+return modis

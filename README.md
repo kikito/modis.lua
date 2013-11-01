@@ -1,4 +1,4 @@
-mondis.lua
+modis.lua
 ==========
 
 This Lua library allows using (a subset of) the Mongo Query Language over redis. Effectively, this means that redis can be used as a document-based database.
@@ -6,12 +6,12 @@ This Lua library allows using (a subset of) the Mongo Query Language over redis.
 Interface
 =========
 
-    local mondis = require 'mondis'
+    local modis = require 'modis'
     local redis  = require 'redis'
 
     local red = <initialize redis connection>
 
-    local db = mondis.connect(red)
+    local db = modis.connect(red)
 
     -- create two documents in the collection 'users'
     db.users.insert({name = 'peter', age = 52, groups = {'bowling', 'pub'} })
@@ -34,7 +34,7 @@ Interface
 Installation
 ============
 
-Just copy mondis.lua in your environment.
+Just copy modis.lua in your environment.
 
 Dependencies
 ============
