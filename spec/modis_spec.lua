@@ -135,6 +135,14 @@ describe('modis', function()
       end)
     end)
 
+    describe(':remove', function()
+      it('removes all documents when given no params', function()
+        db.users:insert({{a=1}, {a=2}, {a=3}})
+        db.users:remove()
+        assert.equal(db.users:count(), 0)
+      end)
+    end)
+
   end)
 end)
 

@@ -180,27 +180,27 @@ local Collection = {}
 local Collection_mt = {__index = Collection, name = 'Collection'}
 
 local function markAsExisting(self)
-  local db = self.db
-  assert(db.red:sadd(db.name .. '/cols', self.name))
+  local db, red = self.db, self.db.red
+  assert(red:sadd(db.name .. '/cols', self.name))
 end
 
 function Collection:exists()
   assertIsInstance(self, Collection_mt, 'exists')
-  local db = self.db
-  return db.red:sismember(db.name .. '/cols', self.name)
+  local db, red = self.db, self.db.red
+  return red:sismember(db.name .. '/cols', self.name)
 end
 
 function Collection:count()
   assertIsInstance(self, Collection_mt, 'count')
-  local db = self.db
-  return db.red:scard(db.name .. '/cols/' .. self.name .. '/ids')
+  local db, red = self.db, self.db.red
+  return red:scard(db.name .. '/cols/' .. self.name .. '/ids')
 end
 
 function Collection:insert(doc)
   assertIsInstance(self, Collection_mt, 'insert')
   markAsExisting(self)
 
-  local db = self.db
+  local db, red = self.db, self.db.red
   local docs = isArray(doc) and doc or {doc}
 
   for _,doc in ipairs(docs) do
@@ -209,35 +209,46 @@ function Collection:insert(doc)
     new_doc._id = new_doc._id or self:count() + 1 -- FIXME not thread safe
     local id = new_doc._id
 
-    db.red:sadd(db.name .. '/cols/' .. self.name .. '/ids', id)
-    db.red:set(db.name .. '/cols/' .. self.name .. '/items/' .. id, serialize(new_doc))
+    red:sadd(db.name .. '/cols/' .. self.name .. '/ids', id)
+    red:set(db.name .. '/cols/' .. self.name .. '/items/' .. id, serialize(new_doc))
   end
 end
 
 function Collection:drop()
-  assertIsInstance(self, Collection_mt, 'insert')
-  local db = self.db
-  db.red:srem(db.name .. '/cols', self.name)
+  assertIsInstance(self, Collection_mt, 'drop')
+  assertIsInstance(self, Collection_mt, 'find')
+  local db, red = self.db, self.db.red
+  red:srem(db.name .. '/cols', self.name)
   local script = ([[
     for _,k in ipairs(redis.call('keys', '%s/cols/%s*')) do
       redis.call('del', k)
     end
   ]]):format(db.name, self.name)
-  return db.red:eval(script, 0)
+  return red:eval(script, 0)
 end
 
 function Collection:find(criteria)
   assertIsInstance(self, Collection_mt, 'find')
-  local db = self.db
+  local db, red = self.db, self.db.red
   local items = {}
-  local all_ids = db.red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
+  local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
   for _,id in ipairs(all_ids) do
     if not criteria._id or tostring(criteria._id) == id then
-      local serialized = db.red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id)
+      local serialized = red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id)
       items[#items + 1] = deserialize(serialized)
     end
   end
   return items
+end
+
+function Collection:remove(criteria, limit)
+  assertIsInstance(self, Collection_mt, 'remove')
+  local db, red = self.db, self.db.red
+  local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
+  for _,id in pairs(all_ids) do
+    red:del(db.name .. '/cols/' .. self.name .. '/items/' .. id)
+    red:srem(db.name .. '/cols/' .. self.name .. '/ids', id)
+  end
 end
 
 ----------------------------------------------------------
