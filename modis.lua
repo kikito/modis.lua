@@ -219,10 +219,10 @@ function Collection:drop()
   local db = self.db
   db.red:srem(db.name .. '/cols', self.name)
   local script = ([[
-    for _,k in ipairs(redis.call('keys', '%s/cols/*')) do
+    for _,k in ipairs(redis.call('keys', '%s/cols/%s*')) do
       redis.call('del', k)
     end
-  ]]):format(db.name)
+  ]]):format(db.name, self.name)
   return db.red:eval(script, 0)
 end
 
