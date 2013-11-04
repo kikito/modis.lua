@@ -109,10 +109,9 @@ local ser = (function()
   end
 
   return function(t)
-    local srefs, result, memo, rev_memo = {}, {}, {[t] = 0}, {[0] = t}
+    local srefs, result, n, memo, rev_memo = {}, {}, 0, {[t] = 0}, {[0] = t}
 
     -- phase 1: recursively descend the table structure
-    local n = 0
     while rev_memo[n] do
       result[n + 1] = write_table_ex(rev_memo[n], memo, rev_memo, srefs, n)
       n = n + 1
