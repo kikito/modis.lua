@@ -203,8 +203,10 @@ function Collection:find(criteria)
   local db = self.db
   local items = {}
   for i=1,self:count() do
-    local serialized = db.red:get(db.name .. '/cols/' .. self.name .. '/items/' .. tostring(i))
-    items[#items + 1] = deserialize(serialized)
+    if not criteria._id or criteria._id == i then
+      local serialized = db.red:get(db.name .. '/cols/' .. self.name .. '/items/' .. tostring(i))
+      items[#items + 1] = deserialize(serialized)
+    end
   end
   return items
 end
