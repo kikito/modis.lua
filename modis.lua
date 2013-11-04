@@ -27,13 +27,23 @@ local modis = {
   ]]
 }
 
+local concat, floor, max = table.concat, math.floor, math.max
+
+local function isArray(array)
+  local maximum, count = 0, 0
+  for k, _ in pairs(array) do
+    if type(k) ~= 'number' or k < 0 or floor(k) ~= k then return false end
+    maximum, count = max(maximum, k), count + 1
+  end
+  return count == maximum
+end
+
 -- This is a modification of ser - https://github.com/gvx/Ser, by Robin Wellner
 local ser = (function()
-  local concat, floor = table.concat, math.floor
 
-  local function getchr(c) return "\\" .. c:byte() end
+  local function escape(c) return "\\" .. c:byte() end
   local function make_safe(text)
-    return ("%q"):format(text):gsub('\n', 'n'):gsub("[\128-\255]", getchr)
+    return ("%q"):format(text):gsub('\n', 'n'):gsub("[\128-\255]", escape)
   end
 
   local oddvals = {inf = '1/0', ['-inf'] = '-1/0', ['nan'] = '0/0'}
@@ -183,28 +193,33 @@ end
 
 function Collection:count()
   local db = self.db
-  return db.red:scard(db.name .. '/cols/' .. self.name .. '/items')
+  return db.red:scard(db.name .. '/cols/' .. self.name .. '/ids')
 end
 
 function Collection:insert(doc)
   markAsExisting(self)
+
   local db = self.db
-  local new_doc = table_merge({}, doc)
+  local docs = isArray(doc) and doc or {doc}
 
-  local id = self:count() + 1
-  new_doc._id = new_doc._id or id
+  for _,doc in ipairs(docs) do
+    local new_doc = table_merge({}, doc)
 
-  db.red:sadd(db.name .. '/cols/' .. self.name .. '/items', id)
-  db.red:set(db.name .. '/cols/' .. self.name .. '/items/' .. tostring(id), serialize(new_doc))
-  return new_doc
+    new_doc._id = new_doc._id or self:count() + 1 -- FIXME not thread safe
+    local id = new_doc._id
+
+    db.red:sadd(db.name .. '/cols/' .. self.name .. '/ids', id)
+    db.red:set(db.name .. '/cols/' .. self.name .. '/items/' .. id, serialize(new_doc))
+  end
 end
 
 function Collection:find(criteria)
   local db = self.db
   local items = {}
-  for i=1,self:count() do
-    if not criteria._id or criteria._id == i then
-      local serialized = db.red:get(db.name .. '/cols/' .. self.name .. '/items/' .. tostring(i))
+  local all_ids = db.red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
+  for _,id in ipairs(all_ids) do
+    if not criteria._id or tostring(criteria._id) == id then
+      local serialized = db.red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id)
       items[#items + 1] = deserialize(serialized)
     end
   end
