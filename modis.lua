@@ -159,6 +159,12 @@ local deserialize = function(str)
   return assert(loadstring(str))()
 end
 
+local function assertIsInstance(self, mt,  method)
+  if type(self) ~= 'table' or getmetatable(self) ~= mt then
+    error(mt.name .. '.' .. method .. ' was called. Use the ":" -> ' .. mt.name .. ':' .. method)
+  end
+end
+
 local function table_merge(dest, source)
   if type(source) ~= 'table' then return source end
 
@@ -171,7 +177,7 @@ local function table_merge(dest, source)
 end
 
 local Collection = {}
-local Collection_mt = {__index = Collection}
+local Collection_mt = {__index = Collection, name = 'Collection'}
 
 local function newCollection(db, name)
   return setmetatable({
@@ -187,16 +193,19 @@ local function markAsExisting(self)
 end
 
 function Collection:exists()
+  assertIsInstance(self, Collection_mt, 'exists')
   local db = self.db
   return db.red:sismember(db.name .. '/cols', self.name)
 end
 
 function Collection:count()
+  assertIsInstance(self, Collection_mt, 'count')
   local db = self.db
   return db.red:scard(db.name .. '/cols/' .. self.name .. '/ids')
 end
 
 function Collection:insert(doc)
+  assertIsInstance(self, Collection_mt, 'insert')
   markAsExisting(self)
 
   local db = self.db
@@ -214,6 +223,7 @@ function Collection:insert(doc)
 end
 
 function Collection:find(criteria)
+  assertIsInstance(self, Collection_mt, 'find')
   local db = self.db
   local items = {}
   local all_ids = db.red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
@@ -228,15 +238,17 @@ end
 
 ----------------------------------------------------------
 
-local DB = {}
-local DB_mt = {
+local Database = {}
+local Database_mt = {
+  name = 'Database',
   __index = function(self, key)
-    if DB[key] then return DB[key] end
+    if Database[key] then return Database[key] end
     return self:getCollection(key)
   end
 }
 
-function DB:dropDatabase()
+function Database:dropDatabase()
+  assertIsInstance(self, Database_mt, 'dropDatabase')
   local script = ([[
     for _,k in ipairs(redis.call('keys', '%s/*')) do
       redis.call('del', k)
@@ -245,19 +257,22 @@ function DB:dropDatabase()
   return self.red:eval(script, 0)
 end
 
-function DB:getCollectionNames()
+function Database:getCollectionNames()
+  assertIsInstance(self, Database_mt, 'getCollectionNames')
   local names = assert(self.red:smembers(self.name .. '/cols'))
   table.sort(names)
   return names
 end
 
-function DB:createCollection(collection)
+function Database:createCollection(collection)
+  assertIsInstance(self, Database_mt, 'createCollection')
   local col = self:getCollection(collection)
   markAsExisting(col)
   return col
 end
 
-function DB:getCollection(collection)
+function Database:getCollection(collection)
+  assertIsInstance(self, Database_mt, 'getCollection')
   return self.collections[collection] or newCollection(self, collection)
 end
 
@@ -269,7 +284,7 @@ function modis.connect(red, options)
     red       = red,
     name      = options.name or 'modis',
     collections = {}
-  }, DB_mt)
+  }, Database_mt)
 end
 
 return modis
