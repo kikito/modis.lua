@@ -179,17 +179,9 @@ end
 local Collection = {}
 local Collection_mt = {__index = Collection, name = 'Collection'}
 
-local function newCollection(db, name)
-  return setmetatable({
-    db = db,
-    name = name
-  }, Collection_mt)
-end
-
 local function markAsExisting(self)
   local db = self.db
   assert(db.red:sadd(db.name .. '/cols', self.name))
-  db.collections[self.name] = self
 end
 
 function Collection:exists()
@@ -220,6 +212,18 @@ function Collection:insert(doc)
     db.red:sadd(db.name .. '/cols/' .. self.name .. '/ids', id)
     db.red:set(db.name .. '/cols/' .. self.name .. '/items/' .. id, serialize(new_doc))
   end
+end
+
+function Collection:drop()
+  assertIsInstance(self, Collection_mt, 'insert')
+  local db = self.db
+  db.red:srem(db.name .. '/cols', self.name)
+  local script = ([[
+    for _,k in ipairs(redis.call('keys', '%s/cols/*')) do
+      redis.call('del', k)
+    end
+  ]]):format(db.name)
+  return db.red:eval(script, 0)
 end
 
 function Collection:find(criteria)
@@ -264,16 +268,19 @@ function Database:getCollectionNames()
   return names
 end
 
-function Database:createCollection(collection)
+function Database:createCollection(collection_name)
   assertIsInstance(self, Database_mt, 'createCollection')
-  local col = self:getCollection(collection)
+  local col = self:getCollection(collection_name)
   markAsExisting(col)
   return col
 end
 
-function Database:getCollection(collection)
+function Database:getCollection(collection_name)
   assertIsInstance(self, Database_mt, 'getCollection')
-  return self.collections[collection] or newCollection(self, collection)
+  return setmetatable({
+    db = self,
+    name = collection_name
+  }, Collection_mt)
 end
 
 ----------------------------------------------------------
@@ -282,8 +289,7 @@ function modis.connect(red, options)
   options = options or {}
   return setmetatable({
     red       = red,
-    name      = options.name or 'modis',
-    collections = {}
+    name      = options.name or 'modis'
   }, Database_mt)
 end
 
