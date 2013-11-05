@@ -350,14 +350,32 @@ local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
     if     isEmpty(value) then
       error('value in ' .. indexName .. ' can not be an empty table')
     elseif isArray(value) then
-      ids = {}
-      for i = 1, #value do
-        ids = array_union(ids, findIdsMatchingIndex(self, indexName, value[i], arrayLevel))
-      end
+      ids = findIdsMatchingIndex(self, indexName, {['$in'] = value}, arrayLevel)
     elseif hasOperators(value) then
-      if value['$in'] then
-        if not isArray(value['$in']) then error('expected array after $in operator in ' .. indexName) end
-        ids = findIdsMatchingIndex(self, indexName, value['$in'], arrayLevel)
+      if     value['$in'] then
+
+        local value_in = value['$in']
+        if not isArray(value_in) then error('expected array after $in operator in ' .. indexName) end
+        ids = {}
+        for i = 1, #value_in do
+          ids = array_union(ids, findIdsMatchingIndex(self, indexName, value_in[i], arrayLevel))
+        end
+
+      elseif value['$all'] then
+
+        local value_all = value['$all']
+        if not isArray(value_all) then error('expected array after $all operator in ' .. indexName) end
+        if isEmpty(value_all) then
+          ids = {}
+        else
+          ids = findIdsMatchingIndex(self, indexName, value_all[1], arrayLevel + 1)
+          for i = 2, #value_all do
+            if isEmpty(ids) then break end
+            ids = array_intersect(ids, findIdsMatchingIndex(self, indexName, value_all[i], arrayLevel + 1))
+          end
+        end
+      else
+        error('unknown operator')
       end
     else
       error ('could not parse table value in ' .. indexName)

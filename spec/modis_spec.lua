@@ -158,9 +158,9 @@ describe('modis', function()
         assert.same({{name='albert', _id = 1}, {name='peter', _id=3}}, db.users:find({name = {['$in'] = {'albert', 'peter'}}}))
       end)
       it('understands $all', function()
-        db.users:insert({{name='albert'}, {name='fred'}, {name='peter'}})
+        db.users:insert({{tags= {'a','b','c'}}, {tags={'b','c','d'}}})
 
-        assert.same({{name='albert', _id = 1}, {name='peter', _id=3}}, db.users:find({name = {['$in'] = {'albert', 'peter'}}}))
+        assert.same({{tags={'a','b','c'}, _id = 1}}, db.users:find({tags = {['$all'] = {'a', 'c'}}}))
       end)
     end)
 
