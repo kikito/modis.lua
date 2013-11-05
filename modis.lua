@@ -180,6 +180,29 @@ local function table_merge(dest, source)
   return dest
 end
 
+----------------------------------------------------------
+
+local function flatten_req(obj, result, prefix)
+  if type(obj) ~= 'table' or isArray(obj) then
+    result[prefix] = obj
+  else
+    prefix = prefix and (prefix .. '.') or ''
+    for k,v in pairs(obj) do
+      flatten_req(v, result, prefix .. tostring(k))
+    end
+  end
+  return result
+end
+
+function modis.flatten(obj)
+  if type(obj) ~= 'table' then error('can not flatten non-tables: ' .. tostring(obj)) end
+  if isArray(obj) then return obj end
+  return flatten_req(obj, {})
+end
+
+
+
+----------------------------------------------------------
 local Collection = {}
 local Collection_mt = {__index = Collection, name = 'Collection'}
 
@@ -188,8 +211,8 @@ local function markAsExisting(self)
   assert(red:sadd(db.name .. '/cols', self.name))
 end
 
-local function find_ids_matching_criteria(self, criteria, limit)
-  criteria = criteria or {}
+local function find_ids_matching_query(self, query, limit)
+  query = query or {}
   limit    = limit or math.huge
 
   local db, red = self.db, self.db.red
@@ -198,7 +221,7 @@ local function find_ids_matching_criteria(self, criteria, limit)
   for i=1,#all_ids do
     if len >= limit then return matching_ids, len end
     local id = all_ids[i]
-    if isEmpty(criteria) or not criteria._id or tostring(criteria._id) == id then
+    if isEmpty(query) or not query._id or tostring(query._id) == id then
       len = len + 1
       matching_ids[len] = id
     end
@@ -249,11 +272,11 @@ function Collection:drop()
   return red:eval(script, 0)
 end
 
-function Collection:find(criteria, limit)
+function Collection:find(query, limit)
   assertIsInstance(self, Collection_mt, 'find')
   local db, red = self.db, self.db.red
   local items = {}
-  local matching_ids, len = find_ids_matching_criteria(self, criteria, limit)
+  local matching_ids, len = find_ids_matching_query(self, query, limit)
   for i=1,len do
     local id = matching_ids[i]
     local serialized = red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id)
@@ -262,10 +285,11 @@ function Collection:find(criteria, limit)
   return items
 end
 
-function Collection:remove(criteria, limit)
+function Collection:remove(query, justOne)
   assertIsInstance(self, Collection_mt, 'remove')
   local db, red = self.db, self.db.red
-  local matching_ids, len = find_ids_matching_criteria(self, criteria, limit)
+  local limit = justOne and 1 or math.huge
+  local matching_ids, len = find_ids_matching_query(self, query, limit)
   for i=1,len do
     local id = matching_ids[i]
     red:del(db.name .. '/cols/' .. self.name .. '/items/' .. id)
