@@ -38,13 +38,14 @@ local OPERATORS = {
   ['$not'] = 'collection'
 }
 
-local concat, floor, max, min = table.concat, math.floor, math.max, math.min
+local rep, concat, floor, max, min = string.rep, table.concat, math.floor, math.max, math.min
 
 local function isEmpty(tbl)
   return next(tbl) == nil
 end
 
 local function isArray(array)
+  if type(array) ~= 'table' then return false end
   local maximum, count = 0, 0
   for k, _ in pairs(array) do
     if type(k) ~= 'number' or k < 0 or floor(k) ~= k then return false end
@@ -262,44 +263,71 @@ local function markAsExisting(self)
   assert(red:sadd(db.name .. '/cols', self.name))
 end
 
+local function removeIndex(self, id, indexName, value, arrayLevel)
+  local db, red       = self.db, self.db.red
+  local array_marker  = rep('[]', arrayLevel)
+  local vtype         = type(value)
+
+  if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
+    local key = {db.name, '/cols/', self.name, '/index/', vtype, array_marker, '?', indexName }
+    if vtype == 'number' then
+      red:zrem(concat(key), id)
+    else --string or boolean
+      local len = #key
+      key[len+1], key[len+2] = '=', tostring(value)
+      red:srem(concat(key), id)
+    end
+  elseif vtype == 'table' and isArray(value) then
+    for _,v in ipairs(value) do
+      removeIndex(self, id, indexName, v, arrayLevel + 1)
+    end
+  else
+    error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+  end
+
+end
+
 local function removeIndexes(self, id)
-  -- note: this function assumes that the id exists
+  assert(id, 'please provide an id')
   local db, red = self.db, self.db.red
   local doc = deserialize(red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id))
 
-  local prefix = db.name .. '/cols/' .. self. name .. '/index/'
+  local prefix = db.name .. '/cols/' .. self.name .. '/index/'
   for indexName, value in pairs(flatten(doc)) do
-    local vtype = type(value)
-    if     vtype == 'string' then
-      red:srem(prefix .. 'string?' .. indexName .. '=' .. value, id)
-    elseif vtype == 'boolean' then
-      red:srem(prefix .. 'boolean?' .. indexName .. '=' .. tostring(value), id)
-    elseif vtype == 'number' then
-      red:zrem(prefix .. 'number?' .. indexName, id)
-    else
-      error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+    removeIndex(self, id, indexName, value, 0)
+  end
+end
+
+local function addIndex(self, id, indexName, value, arrayLevel)
+  local db, red       = self.db, self.db.red
+  local prefix        = db.name .. '/cols/' .. self. name .. '/index/'
+  local array_marker  = rep('[]', arrayLevel)
+  local vtype         = type(value)
+
+  if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
+    local key = {db.name, '/cols/', self.name, '/index/', vtype, array_marker, '?', indexName }
+    if vtype == 'number' then
+      red:zadd(concat(key), value, id)
+    else -- string or boolean
+      local len = #key
+      key[len+1], key[len+2] = '=', tostring(value)
+      red:sadd(concat(key), id)
     end
+  elseif vtype == 'table' and isArray(value) then
+    for _,v in ipairs(value) do
+      addIndex(self, id, indexName, v, arrayLevel + 1)
+    end
+  else
+    error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
   end
 end
 
 local function addIndexes(self, id, doc)
-  -- note: this function assumes that the id exists
-  local db, red = self.db, self.db.red
+  assert(id, 'must provide an id')
 
-  local prefix = db.name .. '/cols/' .. self. name .. '/index/'
   for indexName, value in pairs(flatten(doc)) do
-    local vtype = type(value)
-    if     vtype == 'string' then
-      red:sadd(prefix .. 'string?' .. indexName .. '=' .. value, id)
-    elseif vtype == 'boolean' then
-      red:sadd(prefix .. 'boolean?' .. indexName .. '=' .. tostring(value), id)
-    elseif vtype == 'number' then
-      red:zadd(prefix .. 'number?' .. indexName, value, id)
-    else
-      error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
-    end
+    addIndex(self, id, indexName, value, 0)
   end
-
 end
 
 local function findIdsMatchingIndex(self, indexName, value)
@@ -321,11 +349,15 @@ local function findIdsMatchingIndex(self, indexName, value)
       error('value in ' .. indexName .. ' can not be an empty table')
     elseif isArray(value) then
       ids = {}
+
       for i = 1, #value do
         ids = array_union(ids, findIdsMatchingIndex(self, indexName, value[i]))
       end
     elseif hasOperators(value) then
-      return {}
+      if value['$in'] then
+        if not isArray(value['$in']) then error('expected array after $in operator in ' .. indexName) end
+        ids = findIdsMatchingIndex(self, indexName, value['$in'])
+      end
     else
       error ('could not parse table value in ' .. indexName)
     end
