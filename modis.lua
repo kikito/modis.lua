@@ -38,7 +38,7 @@ local OPERATORS = {
   ['$not'] = 'collection'
 }
 
-local concat, floor, max = table.concat, math.floor, math.max
+local concat, floor, max, min = table.concat, math.floor, math.max, math.min
 
 local function isEmpty(tbl)
   return next(tbl) == nil
@@ -191,6 +191,25 @@ local function table_merge(dest, source)
   return dest
 end
 
+local function array_intersect(arr1, arr2)
+  local values_dict = {}
+  for _,v in ipairs(arr1) do values_dict[v] = true end
+  local result, len = {}, 0
+  for _,v in ipairs(arr2) do
+    if values_dict[v] then
+      len = len + 1
+      result[len] = v
+    end
+  end
+  return result
+end
+
+local function array_truncate(arr, len)
+  local result = {}
+  for i=1,min(#arr, len) do result[i] = arr[i] end
+  return result
+end
+
 ----------------------------------------------------------
 
 local function hasOperators(doc)
@@ -215,6 +234,7 @@ end
 -- flatten({foo = { bar = 'baz' }}) = {['foo.bar'] = 'baz'}
 local function flatten(doc)
   if type(doc) ~= 'table' then error('can not flatten non-tables: ' .. tostring(doc)) end
+  if isEmpty(doc)         then return {} end
   if isArray(doc)         then error('can not flatten arrays: {' .. table.concat(doc, ',') .. '}') end
   if hasOperators(doc)    then error('the provided docect had operators (such as $lt) on its first-level keys') end
   return recursive_flatten(doc, {})
@@ -229,22 +249,95 @@ local function markAsExisting(self)
   assert(red:sadd(db.name .. '/cols', self.name))
 end
 
-local function find_ids_matching_query(self, query, limit)
-  query = query or {}
-  limit    = limit or math.huge
-
+local function removeIndexes(self, id)
+  -- note: this function assumes that the id exists
   local db, red = self.db, self.db.red
-  local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
-  local matching_ids, len = {}, 0
-  for i=1,#all_ids do
-    if len >= limit then return matching_ids, len end
-    local id = all_ids[i]
-    if isEmpty(query) or not query._id or tostring(query._id) == id then
-      len = len + 1
-      matching_ids[len] = id
+  local doc = deserialize(red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id))
+
+  local index_prefix = db.name .. '/cols/' .. self. name .. '/index/'
+  for index_name, value in pairs(flatten(doc)) do
+    local vtype = type(value)
+    if     vtype == 'string' then
+      red:srem(index_prefix .. 'string?' .. index_name .. '=' .. value, id)
+    elseif vtype == 'boolean' then
+      red:srem(index_prefix .. 'boolean?' .. index_name .. '=' .. tostring(value), id)
+    elseif vtype == 'number' then
+      red:zrem(index_prefix .. 'number?' .. index_name, id)
+    else
+      error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. index_name  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
     end
   end
-  return matching_ids, len
+end
+
+local function addIndexes(self, id, doc)
+  -- note: this function assumes that the id exists
+  local db, red = self.db, self.db.red
+
+  local index_prefix = db.name .. '/cols/' .. self. name .. '/index/'
+  for index_name, value in pairs(flatten(doc)) do
+    local vtype = type(value)
+    if     vtype == 'string' then
+      red:sadd(index_prefix .. 'string?' .. index_name .. '=' .. value, id)
+    elseif vtype == 'boolean' then
+      red:sadd(index_prefix .. 'boolean?' .. index_name .. '=' .. tostring(value), id)
+    elseif vtype == 'number' then
+      red:zadd(index_prefix .. 'number?' .. index_name, value, id)
+    else
+      error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. index_name  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+    end
+  end
+
+end
+
+local function findIdsMatchingIndex(self, index_name, value)
+  local db, red = self.db, self.db.red
+
+  local ids
+  local vtype = type(value)
+
+  local index_prefix = db.name .. '/cols/' .. self. name .. '/index/'
+
+  if     vtype == 'string' then
+    ids = red:smembers(index_prefix .. 'string?' .. index_name .. '=' .. value)
+  elseif vtype == 'boolean' then
+    ids = red:smembers(index_prefix .. 'boolean?' .. index_name .. '=' .. tostring(value))
+  elseif vtype == 'number' then
+    ids = red:zrangebyscore(index_prefix .. 'number?' .. index_name, value, value)
+  elseif vtype == 'table' then
+    if     isEmpty(value) then
+      error('value in ' .. index_name .. ' can not be an empty table')
+    elseif isArray(value) then
+      ids = find_ids_matching_index(self, index_name, value[1])
+      for i = 2, #value do
+        if isEmpty(ids) then break end
+        ids = array_intersect(ids, find_ids_matching_index(self, index_name, value[i]))
+      end
+    elseif hasOperators(value) then
+      -- FIXME
+      return {}
+    else
+      error ('could not parse table value in ' .. index_name)
+    end
+  else
+    error ('unknown value type in ' .. index_name .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+  end
+
+  return ids
+end
+
+local function findIdsMatchingQuery(self, query, limit)
+  query = query or {}
+  limit = limit or math.huge
+
+  local db, red = self.db, self.db.red
+  local ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
+
+  for index_name,value in pairs(flatten(query)) do
+    if isEmpty(ids) then break end
+    ids = array_intersect(ids, findIdsMatchingIndex(self, index_name, value))
+  end
+
+  return array_truncate(ids, limit)
 end
 
 function Collection:exists()
@@ -272,8 +365,12 @@ function Collection:insert(doc)
     new_doc._id = new_doc._id or self:count() + 1 -- FIXME not thread safe
     local id = new_doc._id
 
+    local is_new = red:sismember(db.name .. '/cols/' .. self.name .. '/ids', id)
+    if is_new then removeIndexes(self, id) end
+
     red:sadd(db.name .. '/cols/' .. self.name .. '/ids', id)
     red:set(db.name .. '/cols/' .. self.name .. '/items/' .. id, serialize(new_doc))
+    addIndexes(self, id, new_doc)
   end
 end
 
@@ -294,9 +391,9 @@ function Collection:find(query, limit)
   assertIsInstance(self, Collection_mt, 'find')
   local db, red = self.db, self.db.red
   local items = {}
-  local matching_ids, len = find_ids_matching_query(self, query, limit)
-  for i=1,len do
-    local id = matching_ids[i]
+  local ids = findIdsMatchingQuery(self, query, limit)
+  for i=1, #ids do
+    local id = ids[i]
     local serialized = red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id)
     items[i] = deserialize(serialized)
   end
@@ -307,9 +404,10 @@ function Collection:remove(query, justOne)
   assertIsInstance(self, Collection_mt, 'remove')
   local db, red = self.db, self.db.red
   local limit = justOne and 1 or math.huge
-  local matching_ids, len = find_ids_matching_query(self, query, limit)
-  for i=1,len do
-    local id = matching_ids[i]
+  local ids = findIdsMatchingQuery(self, query, limit)
+  for i=1,#ids do
+    local id = ids[i]
+    removeIndexes(self, id)
     red:del(db.name .. '/cols/' .. self.name .. '/items/' .. id)
     red:srem(db.name .. '/cols/' .. self.name .. '/ids', id)
   end
