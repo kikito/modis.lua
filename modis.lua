@@ -27,6 +27,17 @@ local modis = {
   ]]
 }
 
+local OPERATORS = {
+  ['$gt']  = 'comparison',
+  ['$gte'] = 'comparison',
+  ['$lt']  = 'comparison',
+  ['$lte'] = 'comparison',
+
+  ['$in']  = 'collection',
+  ['$all'] = 'collection',
+  ['$not'] = 'collection'
+}
+
 local concat, floor, max = table.concat, math.floor, math.max
 
 local function isEmpty(tbl)
@@ -156,8 +167,8 @@ local ser = (function()
 
 end)()
 
-local serialize   = function(obj)
-  return ser(obj)
+local serialize   = function(doc)
+  return ser(doc)
 end
 local deserialize = function(str)
   return assert(loadstring(str))()
@@ -182,25 +193,32 @@ end
 
 ----------------------------------------------------------
 
-local function flatten_req(obj, result, prefix)
-  if type(obj) ~= 'table' or isArray(obj) then
-    result[prefix] = obj
+local function hasOperators(doc)
+  for k,_ in pairs(doc) do
+    if OPERATORS[k] then return true end
+  end
+  return false
+end
+
+local function recursive_flatten(doc, result, prefix)
+  if type(doc) ~= 'table' or isArray(doc) or hasOperators(doc) then
+    result[prefix] = doc
   else
-    prefix = prefix and (prefix .. '.') or ''
-    for k,v in pairs(obj) do
-      flatten_req(v, result, prefix .. tostring(k))
+    for k,v in pairs(doc) do
+      k = prefix and (prefix .. '.' .. tostring(k)) or k
+      recursive_flatten(v, result, k)
     end
   end
   return result
 end
 
-function modis.flatten(obj)
-  if type(obj) ~= 'table' then error('can not flatten non-tables: ' .. tostring(obj)) end
-  if isArray(obj) then return obj end
-  return flatten_req(obj, {})
+-- flatten({foo = { bar = 'baz' }}) = {['foo.bar'] = 'baz'}
+local function flatten(doc)
+  if type(doc) ~= 'table' then error('can not flatten non-tables: ' .. tostring(doc)) end
+  if isArray(doc)         then error('can not flatten arrays: {' .. table.concat(doc, ',') .. '}') end
+  if hasOperators(doc)    then error('the provided docect had operators (such as $lt) on its first-level keys') end
+  return recursive_flatten(doc, {})
 end
-
-
 
 ----------------------------------------------------------
 local Collection = {}

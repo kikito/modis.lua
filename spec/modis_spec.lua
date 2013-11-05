@@ -12,17 +12,6 @@ describe('modis', function()
     red:quit()
   end)
 
-  describe('.flatten', function()
-    it('transforms an object into a flat 1-dimensional table', function()
-      local f = modis.flatten
-      assert.same(f({name='peter'}),     {name = 'peter'})
-      assert.same(f({1,2,3}),            {1,2,3})
-      assert.same(f({items={1,2,3}}),    {items = {1,2,3}})
-      assert.same(f({list={qty = 1}}),   {['list.qty'] = 1})
-      assert.same(f({weight={['$lt'] = 1}}),   {['weight.$lt'] = 1})
-    end)
-  end)
-
   describe('db', function()
     describe(':getCollectionNames', function()
       it('is initially empty', function()
