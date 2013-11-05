@@ -184,6 +184,19 @@ local function markAsExisting(self)
   assert(red:sadd(db.name .. '/cols', self.name))
 end
 
+local function find_ids_matching_criteria(self, criteria, limit)
+  local db, red = self.db, self.db.red
+  local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
+  local matching_ids, len = {}, 0
+  for _,id in pairs(all_ids) do
+    if not criteria or not criteria._id or tostring(criteria._id) == id then
+      len = len + 1
+      matching_ids[len] = id
+    end
+  end
+  return matching_ids, len
+end
+
 function Collection:exists()
   assertIsInstance(self, Collection_mt, 'exists')
   local db, red = self.db, self.db.red
@@ -227,16 +240,15 @@ function Collection:drop()
   return red:eval(script, 0)
 end
 
-function Collection:find(criteria)
+function Collection:find(criteria, limit)
   assertIsInstance(self, Collection_mt, 'find')
   local db, red = self.db, self.db.red
   local items = {}
-  local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
-  for _,id in ipairs(all_ids) do
-    if not criteria._id or tostring(criteria._id) == id then
-      local serialized = red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id)
-      items[#items + 1] = deserialize(serialized)
-    end
+  local matching_ids, len = find_ids_matching_criteria(self, criteria, limit)
+  for i=1,len do
+    local id = matching_ids[i]
+    local serialized = red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id)
+    items[i] = deserialize(serialized)
   end
   return items
 end
@@ -244,11 +256,13 @@ end
 function Collection:remove(criteria, limit)
   assertIsInstance(self, Collection_mt, 'remove')
   local db, red = self.db, self.db.red
-  local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
-  for _,id in pairs(all_ids) do
+  local matching_ids, len = find_ids_matching_criteria(self, criteria, limit)
+  for i=1,len do
+    local id = matching_ids[i]
     red:del(db.name .. '/cols/' .. self.name .. '/items/' .. id)
     red:srem(db.name .. '/cols/' .. self.name .. '/ids', id)
   end
+  return len
 end
 
 ----------------------------------------------------------
