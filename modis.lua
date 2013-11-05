@@ -191,12 +191,24 @@ local function table_merge(dest, source)
   return dest
 end
 
+local function array_union(arr1, arr2)
+  local values_set = {}
+  for _,v in ipairs(arr1) do values_set[v] = true end
+  for _,v in ipairs(arr2) do values_set[v] = true end
+  local result, len = {}, 0
+  for k,_ in pairs(values_set) do
+    len = len + 1
+    result[len] = k
+  end
+  return result
+end
+
 local function array_intersect(arr1, arr2)
-  local values_dict = {}
-  for _,v in ipairs(arr1) do values_dict[v] = true end
+  local values_set = {}
+  for _,v in ipairs(arr1) do values_set[v] = true end
   local result, len = {}, 0
   for _,v in ipairs(arr2) do
-    if values_dict[v] then
+    if values_set[v] then
       len = len + 1
       result[len] = v
     end
@@ -255,17 +267,17 @@ local function removeIndexes(self, id)
   local db, red = self.db, self.db.red
   local doc = deserialize(red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id))
 
-  local index_prefix = db.name .. '/cols/' .. self. name .. '/index/'
-  for index_name, value in pairs(flatten(doc)) do
+  local prefix = db.name .. '/cols/' .. self. name .. '/index/'
+  for indexName, value in pairs(flatten(doc)) do
     local vtype = type(value)
     if     vtype == 'string' then
-      red:srem(index_prefix .. 'string?' .. index_name .. '=' .. value, id)
+      red:srem(prefix .. 'string?' .. indexName .. '=' .. value, id)
     elseif vtype == 'boolean' then
-      red:srem(index_prefix .. 'boolean?' .. index_name .. '=' .. tostring(value), id)
+      red:srem(prefix .. 'boolean?' .. indexName .. '=' .. tostring(value), id)
     elseif vtype == 'number' then
-      red:zrem(index_prefix .. 'number?' .. index_name, id)
+      red:zrem(prefix .. 'number?' .. indexName, id)
     else
-      error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. index_name  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+      error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
     end
   end
 end
@@ -274,53 +286,51 @@ local function addIndexes(self, id, doc)
   -- note: this function assumes that the id exists
   local db, red = self.db, self.db.red
 
-  local index_prefix = db.name .. '/cols/' .. self. name .. '/index/'
-  for index_name, value in pairs(flatten(doc)) do
+  local prefix = db.name .. '/cols/' .. self. name .. '/index/'
+  for indexName, value in pairs(flatten(doc)) do
     local vtype = type(value)
     if     vtype == 'string' then
-      red:sadd(index_prefix .. 'string?' .. index_name .. '=' .. value, id)
+      red:sadd(prefix .. 'string?' .. indexName .. '=' .. value, id)
     elseif vtype == 'boolean' then
-      red:sadd(index_prefix .. 'boolean?' .. index_name .. '=' .. tostring(value), id)
+      red:sadd(prefix .. 'boolean?' .. indexName .. '=' .. tostring(value), id)
     elseif vtype == 'number' then
-      red:zadd(index_prefix .. 'number?' .. index_name, value, id)
+      red:zadd(prefix .. 'number?' .. indexName, value, id)
     else
-      error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. index_name  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+      error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
     end
   end
 
 end
 
-local function findIdsMatchingIndex(self, index_name, value)
+local function findIdsMatchingIndex(self, indexName, value)
   local db, red = self.db, self.db.red
 
   local ids
   local vtype = type(value)
 
-  local index_prefix = db.name .. '/cols/' .. self. name .. '/index/'
+  local prefix = db.name .. '/cols/' .. self. name .. '/index/'
 
   if     vtype == 'string' then
-    ids = red:smembers(index_prefix .. 'string?' .. index_name .. '=' .. value)
+    ids = red:smembers(prefix .. 'string?' .. indexName .. '=' .. value)
   elseif vtype == 'boolean' then
-    ids = red:smembers(index_prefix .. 'boolean?' .. index_name .. '=' .. tostring(value))
+    ids = red:smembers(prefix .. 'boolean?' .. indexName .. '=' .. tostring(value))
   elseif vtype == 'number' then
-    ids = red:zrangebyscore(index_prefix .. 'number?' .. index_name, value, value)
+    ids = red:zrangebyscore(prefix .. 'number?' .. indexName, value, value)
   elseif vtype == 'table' then
     if     isEmpty(value) then
-      error('value in ' .. index_name .. ' can not be an empty table')
+      error('value in ' .. indexName .. ' can not be an empty table')
     elseif isArray(value) then
-      ids = find_ids_matching_index(self, index_name, value[1])
-      for i = 2, #value do
-        if isEmpty(ids) then break end
-        ids = array_intersect(ids, find_ids_matching_index(self, index_name, value[i]))
+      ids = {}
+      for i = 1, #value do
+        ids = array_union(ids, findIdsMatchingIndex(self, indexName, value[i]))
       end
     elseif hasOperators(value) then
-      -- FIXME
       return {}
     else
-      error ('could not parse table value in ' .. index_name)
+      error ('could not parse table value in ' .. indexName)
     end
   else
-    error ('unknown value type in ' .. index_name .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+    error ('unknown value type in ' .. indexName .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
   end
 
   return ids
@@ -333,9 +343,9 @@ local function findIdsMatchingQuery(self, query, limit)
   local db, red = self.db, self.db.red
   local ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
 
-  for index_name,value in pairs(flatten(query)) do
+  for indexName,value in pairs(flatten(query)) do
     if isEmpty(ids) then break end
-    ids = array_intersect(ids, findIdsMatchingIndex(self, index_name, value))
+    ids = array_intersect(ids, findIdsMatchingIndex(self, indexName, value))
   end
 
   return array_truncate(ids, limit)
