@@ -244,7 +244,7 @@ local function recursive_flatten(doc, result, prefix)
   return result
 end
 
--- flatten({foo = { bar = 'baz' }}) = {['foo.bar'] = 'baz'}
+-- flatten({a = 1, foo = { bar = 'baz' }}) = {a = 1, ['foo.bar'] = 'baz'}
 local function flatten(doc)
   if type(doc) ~= 'table' then error('can not flatten non-tables: ' .. tostring(doc)) end
   if isEmpty(doc)         then return {} end
@@ -263,19 +263,27 @@ local function markAsExisting(self)
   assert(red:sadd(db.name .. '/cols', self.name))
 end
 
+local function getIndexKey(self, indexName, value, arrayLevel)
+  local arrayMark = rep('[]', arrayLevel)
+  local vtype     = type(value)
+  local key       = {self.db.name, '/cols/', self.name, '/index/', vtype, arrayMark, '?', indexName }
+  if vtype ~= 'number' then
+    local len = #key
+    key[len+1], key[len+2] = '=', tostring(value)
+  end
+  return concat(key)
+end
+
 local function removeIndex(self, id, indexName, value, arrayLevel)
-  local db, red       = self.db, self.db.red
-  local array_marker  = rep('[]', arrayLevel)
-  local vtype         = type(value)
+  local db, red    = self.db, self.db.red
+  local vtype      = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
-    local key = {db.name, '/cols/', self.name, '/index/', vtype, array_marker, '?', indexName }
+    local key = getIndexKey(self, indexName, value, arrayLevel)
     if vtype == 'number' then
-      red:zrem(concat(key), id)
+      red:zrem(key, id)
     else --string or boolean
-      local len = #key
-      key[len+1], key[len+2] = '=', tostring(value)
-      red:srem(concat(key), id)
+      red:srem(key, id)
     end
   elseif vtype == 'table' and isArray(value) then
     for _,v in ipairs(value) do
@@ -292,26 +300,21 @@ local function removeIndexes(self, id)
   local db, red = self.db, self.db.red
   local doc = deserialize(red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id))
 
-  local prefix = db.name .. '/cols/' .. self.name .. '/index/'
   for indexName, value in pairs(flatten(doc)) do
     removeIndex(self, id, indexName, value, 0)
   end
 end
 
 local function addIndex(self, id, indexName, value, arrayLevel)
-  local db, red       = self.db, self.db.red
-  local prefix        = db.name .. '/cols/' .. self. name .. '/index/'
-  local array_marker  = rep('[]', arrayLevel)
-  local vtype         = type(value)
+  local db, red   = self.db, self.db.red
+  local vtype     = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
-    local key = {db.name, '/cols/', self.name, '/index/', vtype, array_marker, '?', indexName }
+    local key = getIndexKey(self, indexName, value, arrayLevel)
     if vtype == 'number' then
-      red:zadd(concat(key), value, id)
+      red:zadd(key, value, id)
     else -- string or boolean
-      local len = #key
-      key[len+1], key[len+2] = '=', tostring(value)
-      red:sadd(concat(key), id)
+      red:sadd(key, id)
     end
   elseif vtype == 'table' and isArray(value) then
     for _,v in ipairs(value) do
@@ -330,33 +333,31 @@ local function addIndexes(self, id, doc)
   end
 end
 
-local function findIdsMatchingIndex(self, indexName, value)
+local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
   local db, red = self.db, self.db.red
 
   local ids
   local vtype = type(value)
 
-  local prefix = db.name .. '/cols/' .. self. name .. '/index/'
-
-  if     vtype == 'string' then
-    ids = red:smembers(prefix .. 'string?' .. indexName .. '=' .. value)
-  elseif vtype == 'boolean' then
-    ids = red:smembers(prefix .. 'boolean?' .. indexName .. '=' .. tostring(value))
-  elseif vtype == 'number' then
-    ids = red:zrangebyscore(prefix .. 'number?' .. indexName, value, value)
+  if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
+    local key = getIndexKey(self, indexName, value, arrayLevel)
+    if vtype == 'number' then
+      ids = red:zrangebyscore(key, value, value)
+    else --string or boolean
+      ids = red:smembers(key)
+    end
   elseif vtype == 'table' then
     if     isEmpty(value) then
       error('value in ' .. indexName .. ' can not be an empty table')
     elseif isArray(value) then
       ids = {}
-
       for i = 1, #value do
-        ids = array_union(ids, findIdsMatchingIndex(self, indexName, value[i]))
+        ids = array_union(ids, findIdsMatchingIndex(self, indexName, value[i], arrayLevel))
       end
     elseif hasOperators(value) then
       if value['$in'] then
         if not isArray(value['$in']) then error('expected array after $in operator in ' .. indexName) end
-        ids = findIdsMatchingIndex(self, indexName, value['$in'])
+        ids = findIdsMatchingIndex(self, indexName, value['$in'], arrayLevel)
       end
     else
       error ('could not parse table value in ' .. indexName)
@@ -377,7 +378,7 @@ local function findIdsMatchingQuery(self, query, limit)
 
   for indexName,value in pairs(flatten(query)) do
     if isEmpty(ids) then break end
-    ids = array_intersect(ids, findIdsMatchingIndex(self, indexName, value))
+    ids = array_intersect(ids, findIdsMatchingIndex(self, indexName, value, 0))
   end
 
   return array_truncate(ids, limit)
