@@ -246,6 +246,7 @@ local Collection_mt = {__index = Collection, name = 'Collection'}
 
 local function markAsExisting(self)
   local db, red = self.db, self.db.red
+  db.collections[self.name] = self
   assert(red:sadd(db.name .. '/cols', self.name))
 end
 
@@ -376,7 +377,6 @@ end
 
 function Collection:drop()
   assertIsInstance(self, Collection_mt, 'drop')
-  assertIsInstance(self, Collection_mt, 'find')
   local db, red = self.db, self.db.red
   red:srem(db.name .. '/cols', self.name)
   local script = ([[
@@ -384,6 +384,7 @@ function Collection:drop()
       redis.call('del', k)
     end
   ]]):format(db.name, self.name)
+  db.collections[self.name] = nil
   return red:eval(script, 0)
 end
 
@@ -451,7 +452,7 @@ end
 
 function Database:getCollection(collection_name)
   assertIsInstance(self, Database_mt, 'getCollection')
-  return setmetatable({
+  return self.collections[collection_name] or setmetatable({
     db = self,
     name = collection_name
   }, Collection_mt)
@@ -462,8 +463,9 @@ end
 function modis.connect(red, options)
   options = options or {}
   return setmetatable({
-    red       = red,
-    name      = options.name or 'modis'
+    red         = red,
+    name        = options.name or 'modis',
+    collections = {}
   }, Database_mt)
 end
 
