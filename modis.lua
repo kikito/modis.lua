@@ -29,6 +29,10 @@ local modis = {
 
 local concat, floor, max = table.concat, math.floor, math.max
 
+local function isEmpty(tbl)
+  return next(tbl) == nil
+end
+
 local function isArray(array)
   local maximum, count = 0, 0
   for k, _ in pairs(array) do
@@ -185,11 +189,16 @@ local function markAsExisting(self)
 end
 
 local function find_ids_matching_criteria(self, criteria, limit)
+  criteria = criteria or {}
+  limit    = limit or math.huge
+
   local db, red = self.db, self.db.red
   local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
   local matching_ids, len = {}, 0
-  for _,id in pairs(all_ids) do
-    if not criteria or not criteria._id or tostring(criteria._id) == id then
+  for i=1,#all_ids do
+    if len >= limit then return matching_ids, len end
+    local id = all_ids[i]
+    if isEmpty(criteria) or not criteria._id or tostring(criteria._id) == id then
       len = len + 1
       matching_ids[len] = id
     end
