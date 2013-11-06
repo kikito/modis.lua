@@ -311,7 +311,7 @@ end
 local function removeIndexes(self, id)
   assert(id, 'please provide an id')
   local db, red = self.db, self.db.red
-  local doc = deserialize(red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id))
+  local doc = deserialize(red:get(db.name .. '/cols/' .. self.name .. '/docs/' .. id))
 
   for indexName, value in pairs(flatten(doc)) do
     removeIndex(self, id, indexName, value, 0)
@@ -471,7 +471,7 @@ function Collection:insert(doc)
     if is_new then removeIndexes(self, id) end
 
     red:sadd(db.name .. '/cols/' .. self.name .. '/ids', id)
-    red:set(db.name .. '/cols/' .. self.name .. '/items/' .. id, serialize(new_doc))
+    red:set(db.name .. '/cols/' .. self.name .. '/docs/' .. id, serialize(new_doc))
     addIndexes(self, id, new_doc)
   end
 end
@@ -492,14 +492,14 @@ end
 function Collection:find(query, limit)
   assertIsInstance(self, Collection_mt, 'find')
   local db, red = self.db, self.db.red
-  local items = {}
+  local docs = {}
   local ids = findIdsMatchingQuery(self, query, limit)
   for i=1, #ids do
     local id = ids[i]
-    local serialized = red:get(db.name .. '/cols/' .. self.name .. '/items/' .. id)
-    items[i] = deserialize(serialized)
+    local serialized = red:get(db.name .. '/cols/' .. self.name .. '/docs/' .. id)
+    docs[i] = deserialize(serialized)
   end
-  return items
+  return docs
 end
 
 function Collection:remove(query, justOne)
@@ -510,7 +510,7 @@ function Collection:remove(query, justOne)
   for i=1,#ids do
     local id = ids[i]
     removeIndexes(self, id)
-    red:del(db.name .. '/cols/' .. self.name .. '/items/' .. id)
+    red:del(db.name .. '/cols/' .. self.name .. '/docs/' .. id)
     red:srem(db.name .. '/cols/' .. self.name .. '/ids', id)
   end
   return len
