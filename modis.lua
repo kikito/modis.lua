@@ -217,6 +217,19 @@ local function array_intersect(arr1, arr2)
   return result
 end
 
+local function array_difference(arr1, arr2)
+  local values_set = {}
+  for _,v in ipairs(arr2) do values_set[v] = true end
+  local result, len = {}, 0
+  for _,v in ipairs(arr1) do
+    if not values_set[v] then
+      len = len + 1
+      result[len] = v
+    end
+  end
+  return result
+end
+
 local function array_truncate(arr, len)
   local result = {}
   for i=1,min(#arr, len) do result[i] = arr[i] end
@@ -333,6 +346,12 @@ local function addIndexes(self, id, doc)
   end
 end
 
+local function assertNumericOperatorType(indexName, operator, value)
+  if value == nil then return end
+  local vtype = type(value)
+  if vtype ~= 'number' then error(indexName .. '.' .. operator .. ' must be a number. Was ' .. tostring(value) .. '(' .. vtype .. ')') end
+end
+
 local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
   local db, red = self.db, self.db.red
 
@@ -352,7 +371,21 @@ local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
     elseif isArray(value) then
       ids = findIdsMatchingIndex(self, indexName, {['$in'] = value}, arrayLevel)
     elseif hasOperators(value) then
-      if     value['$in'] then
+      if value['$lt'] or value['$lte'] or value['$gt'] or value['$gte'] then
+        local lt, lte, gt, gte = value['$lt'], value['$lte'], value['$gt'], value['$gte']
+
+        assertNumericOperatorType(indexName, '$lt',  lt)
+        assertNumericOperatorType(indexName, '$lte', lte)
+        assertNumericOperatorType(indexName, '$gt',  gt)
+        assertNumericOperatorType(indexName, '$gte', gte)
+
+        local rmin = (gt and "(" .. tostring(gt)) or gte or "-inf"
+        local rmax = (lt and "(" .. tostring(lt)) or lte or "+inf"
+
+        local key = getIndexKey(self, indexName, 0, arrayLevel) -- Use 0 to get a numeric key
+        ids = red:zrangebyscore(key, rmin, rmax)
+
+      elseif value['$in'] then
 
         local value_in = value['$in']
         if not isArray(value_in) then error('expected array after $in operator in ' .. indexName) end
@@ -374,6 +407,13 @@ local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
             ids = array_intersect(ids, findIdsMatchingIndex(self, indexName, value_all[i], arrayLevel + 1))
           end
         end
+
+      elseif value['$not'] then
+
+        local not_ids = findIdsMatchingIndex(self, indexName, value['$not'], arrayLevel)
+        local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
+        ids = array_difference(all_ids, not_ids)
+
       else
         error('unknown operator')
       end
