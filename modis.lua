@@ -429,6 +429,7 @@ function Collection:insert(doc)
   local db, red = self.db, self.conn.red
   local docs = isArray(doc) and doc or {doc}
 
+  db.conn:createDatabase(db.name)
   db:createCollection(self.name)
 
   for _,doc in ipairs(docs) do
@@ -532,22 +533,39 @@ function Database:getCollection(collection_name)
   }, Collection_mt)
 end
 
+function Database:exists()
+  assertIsInstance(self, Database_mt, 'exists')
+  return self.conn.red:sismember(self.conn.namespace .. '/dbs', self.name)
+end
+
 ----------------------------------------------------------
 
 local Connection = {}
 local Connection_mt = {__index = Connection, name = 'Connection'}
 
-function Connection:new_db_handle(database_name)
-  assertIsInstance(self, Connection_mt, 'new_db_handle')
-  assert(type(database_name) == 'string', 'Database name required')
-  self.databases[database_name] = self.databases[database_name ] or setmetatable({
+function Connection:getDatabase(databaseName)
+  assertIsInstance(self, Connection_mt, 'getDatabase')
+  assert(type(databaseName) == 'string', 'Database name required')
+
+  return self.databases[databaseName] or setmetatable({
     conn = self,
-    name = database_name,
-    namespace = self.namespace .. '/dbs/' .. database_name,
+    name = databaseName,
+    namespace = self.namespace .. '/dbs/' .. databaseName,
     collections = {}
   }, Database_mt)
+end
 
-  return self.databases[database_name]
+function Connection:createDatabase(databaseName)
+  self.databases[databaseName] = self:getDatabase(databaseName)
+  self.red:sadd(self.namespace .. '/dbs', databaseName)
+  return self.databases[databaseName]
+end
+
+function Connection:getDatabaseNames()
+  assertIsInstance(self, Connection_mt, 'getDatabaseNames')
+  local names = self.red:smembers(self.namespace .. '/dbs')
+  table.sort(names)
+  return names
 end
 
 function Connection:shutdown()
