@@ -307,6 +307,8 @@ local function removeIndexes(self, id)
   for indexName, value in pairs(flatten(doc)) do
     removeIndex(self, id, indexName, value, 0)
   end
+
+  return doc
 end
 
 local function addIndex(self, id, indexName, value)
@@ -325,8 +327,8 @@ local function addIndex(self, id, indexName, value)
   end
 end
 
-local function addIndexes(self, id, doc)
-  assert(id, 'must provide an id')
+local function addIndexes(self, doc)
+  local id = doc._id
 
   for indexName, value in pairs(flatten(doc)) do
     addIndex(self, id, indexName, value, 0)
@@ -448,7 +450,7 @@ function Collection:insert(doc)
 
     red:sadd(self.namespace .. '/docs', id)
     red:set(self.namespace .. '/docs/' .. id, serialize(new_doc))
-    addIndexes(self, id, new_doc)
+    addIndexes(self, new_doc)
   end
 end
 
@@ -489,7 +491,23 @@ function Collection:remove(query, justOne)
     red:del(self.namespace .. '/docs/' .. id)
     red:srem(self.namespace .. '/docs', id)
   end
-  return len
+end
+
+function Collection:update(query, modifications)
+  assertIsInstance(self, Collection_mt, 'update')
+  local red = self.conn.red
+
+  local ids = findIdsMatchingQuery(self, query, limit)
+  for i=1, #ids do
+    local id = ids[i]
+
+    local key = self.namespace .. '/docs/' .. id
+
+    local doc = removeIndexes(self, id)
+    table_merge(doc, modifications)
+    red:set(key, serialize(doc))
+    addIndexes(self, doc)
+  end
 end
 
 ----------------------------------------------------------
