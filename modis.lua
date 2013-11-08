@@ -384,7 +384,7 @@ local function findIdsMatchingIndex(self, indexName, value)
       elseif value['$not'] then
 
         local not_ids = findIdsMatchingIndex(self, indexName, value['$not'])
-        local all_ids = red:smembers(self.namespace .. '/ids')
+        local all_ids = red:smembers(self.namespace .. '/docs')
         ids = array_difference(all_ids, not_ids)
 
       end
@@ -403,7 +403,7 @@ local function findIdsMatchingQuery(self, query, limit)
   limit = limit or math.huge
 
   local db, red = self.db, self.conn.red
-  local ids = red:smembers(self.namespace .. '/ids')
+  local ids = red:smembers(self.namespace .. '/docs')
 
   for indexName,value in pairs(flatten(query)) do
     if isEmpty(ids) then break end
@@ -422,7 +422,7 @@ function Collection:count(query)
   assertIsInstance(self, Collection_mt, 'count')
   query = query or {}
   if isEmpty(query) then
-    return self.conn.red:scard(self.namespace .. '/ids')
+    return self.conn.red:scard(self.namespace .. '/docs')
   else
     return #findIdsMatchingQuery(self, query)
   end
@@ -443,10 +443,10 @@ function Collection:insert(doc)
     new_doc._id = new_doc._id or self:count() + 1 -- FIXME not thread safe
     local id = new_doc._id
 
-    local is_new = red:sismember(self.namespace .. '/ids', id)
+    local is_new = red:sismember(self.namespace .. '/docs', id)
     if is_new then removeIndexes(self, id) end
 
-    red:sadd(self.namespace .. '/ids', id)
+    red:sadd(self.namespace .. '/docs', id)
     red:set(self.namespace .. '/docs/' .. id, serialize(new_doc))
     addIndexes(self, id, new_doc)
   end
@@ -487,7 +487,7 @@ function Collection:remove(query, justOne)
     local id = ids[i]
     removeIndexes(self, id)
     red:del(self.namespace .. '/docs/' .. id)
-    red:srem(self.namespace .. '/ids', id)
+    red:srem(self.namespace .. '/docs', id)
   end
   return len
 end
