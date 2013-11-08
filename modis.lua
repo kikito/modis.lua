@@ -272,15 +272,9 @@ end
 local Collection = {}
 local Collection_mt = {__index = Collection, name = 'Collection'}
 
-local function markAsExisting(self)
-  local db, red = self.db, self.db.red
-  db.collections[self.name] = self
-  assert(red:sadd(db.name .. '/cols', self.name))
-end
-
 local function getIndexKey(self, indexName, value)
   local vtype     = type(value)
-  local key       = {self.db.name, '/cols/', self.name, '/index/', vtype, '?', indexName }
+  local key       = {self.namespace, '/index/', vtype, '?', indexName }
   if vtype ~= 'number' then
     local len = #key
     key[len+1], key[len+2] = '=', tostring(value)
@@ -289,7 +283,7 @@ local function getIndexKey(self, indexName, value)
 end
 
 local function removeIndex(self, id, indexName, value)
-  local db, red    = self.db, self.db.red
+  local db, red    = self.db, self.red
   local vtype      = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
@@ -307,8 +301,8 @@ end
 
 local function removeIndexes(self, id)
   assert(id, 'please provide an id')
-  local db, red = self.db, self.db.red
-  local doc = deserialize(red:get(db.name .. '/cols/' .. self.name .. '/docs/' .. id))
+  local db, red = self.db, self.red
+  local doc = deserialize(red:get(self.namespace .. '/docs/' .. id))
 
   for indexName, value in pairs(flatten(doc)) do
     removeIndex(self, id, indexName, value, 0)
@@ -316,7 +310,7 @@ local function removeIndexes(self, id)
 end
 
 local function addIndex(self, id, indexName, value)
-  local db, red   = self.db, self.db.red
+  local db, red   = self.db, self.red
   local vtype     = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
@@ -346,7 +340,7 @@ local function assertNumericOperatorType(indexName, operator, value)
 end
 
 local function findIdsMatchingIndex(self, indexName, value)
-  local db, red = self.db, self.db.red
+  local db, red = self.db, self.red
 
   local ids
   local vtype = type(value)
@@ -390,7 +384,7 @@ local function findIdsMatchingIndex(self, indexName, value)
       elseif value['$not'] then
 
         local not_ids = findIdsMatchingIndex(self, indexName, value['$not'])
-        local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
+        local all_ids = red:smembers(self.namespace .. '/ids')
         ids = array_difference(all_ids, not_ids)
 
       end
@@ -408,8 +402,8 @@ local function findIdsMatchingQuery(self, query, limit)
   query = query or {}
   limit = limit or math.huge
 
-  local db, red = self.db, self.db.red
-  local ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
+  local db, red = self.db, self.red
+  local ids = red:smembers(self.namespace .. '/ids')
 
   for indexName,value in pairs(flatten(query)) do
     if isEmpty(ids) then break end
@@ -421,22 +415,21 @@ end
 
 function Collection:exists()
   assertIsInstance(self, Collection_mt, 'exists')
-  local db, red = self.db, self.db.red
-  return red:sismember(db.name .. '/cols', self.name)
+  return self.red:sismember(self.db.namespace .. '/cols', self.name)
 end
 
 function Collection:count()
   assertIsInstance(self, Collection_mt, 'count')
-  local db, red = self.db, self.db.red
-  return red:scard(db.name .. '/cols/' .. self.name .. '/ids')
+  return self.red:scard(self.namespace .. '/ids')
 end
 
 function Collection:insert(doc)
   assertIsInstance(self, Collection_mt, 'insert')
-  markAsExisting(self)
 
-  local db, red = self.db, self.db.red
+  local db, red = self.db, self.red
   local docs = isArray(doc) and doc or {doc}
+
+  db:createCollection(self.name)
 
   for _,doc in ipairs(docs) do
     local new_doc = table_merge({}, doc)
@@ -444,36 +437,36 @@ function Collection:insert(doc)
     new_doc._id = new_doc._id or self:count() + 1 -- FIXME not thread safe
     local id = new_doc._id
 
-    local is_new = red:sismember(db.name .. '/cols/' .. self.name .. '/ids', id)
+    local is_new = red:sismember(self.namespace .. '/ids', id)
     if is_new then removeIndexes(self, id) end
 
-    red:sadd(db.name .. '/cols/' .. self.name .. '/ids', id)
-    red:set(db.name .. '/cols/' .. self.name .. '/docs/' .. id, serialize(new_doc))
+    red:sadd(self.namespace .. '/ids', id)
+    red:set(self.namespace .. '/docs/' .. id, serialize(new_doc))
     addIndexes(self, id, new_doc)
   end
 end
 
 function Collection:drop()
   assertIsInstance(self, Collection_mt, 'drop')
-  local db, red = self.db, self.db.red
-  red:srem(db.name .. '/cols', self.name)
+  local db, red = self.db, self.red
+  red:srem(db.namespace .. '/cols', self.name)
   local script = ([[
-    for _,k in ipairs(redis.call('keys', '%s/cols/%s*')) do
+    for _,k in ipairs(redis.call('keys', '%s*')) do
       redis.call('del', k)
     end
-  ]]):format(db.name, self.name)
+  ]]):format(self.namespace)
   db.collections[self.name] = nil
   return red:eval(script, 0)
 end
 
 function Collection:find(query, limit)
   assertIsInstance(self, Collection_mt, 'find')
-  local db, red = self.db, self.db.red
+  local db, red = self.db, self.red
   local docs = {}
   local ids = findIdsMatchingQuery(self, query, limit)
   for i=1, #ids do
     local id = ids[i]
-    local serialized = red:get(db.name .. '/cols/' .. self.name .. '/docs/' .. id)
+    local serialized = red:get(self.namespace .. '/docs/' .. id)
     docs[i] = deserialize(serialized)
   end
   return docs
@@ -481,14 +474,14 @@ end
 
 function Collection:remove(query, justOne)
   assertIsInstance(self, Collection_mt, 'remove')
-  local db, red = self.db, self.db.red
+  local db, red = self.db, self.red
   local limit = justOne and 1 or math.huge
   local ids = findIdsMatchingQuery(self, query, limit)
   for i=1,#ids do
     local id = ids[i]
     removeIndexes(self, id)
-    red:del(db.name .. '/cols/' .. self.name .. '/docs/' .. id)
-    red:srem(db.name .. '/cols/' .. self.name .. '/ids', id)
+    red:del(self.namespace .. '/docs/' .. id)
+    red:srem(self.namespace .. '/ids', id)
   end
   return len
 end
@@ -510,13 +503,13 @@ function Database:dropDatabase()
     for _,k in ipairs(redis.call('keys', '%s/*')) do
       redis.call('del', k)
     end
-  ]]):format(self.name)
+  ]]):format(self.namespace)
   return self.red:eval(script, 0)
 end
 
 function Database:getCollectionNames()
   assertIsInstance(self, Database_mt, 'getCollectionNames')
-  local names = assert(self.red:smembers(self.name .. '/cols'))
+  local names = assert(self.red:smembers(self.namespace .. '/cols'))
   table.sort(names)
   return names
 end
@@ -524,7 +517,8 @@ end
 function Database:createCollection(collection_name)
   assertIsInstance(self, Database_mt, 'createCollection')
   local col = self:getCollection(collection_name)
-  markAsExisting(col)
+  self.collections[collection_name] = col
+  assert(self.red:sadd(self.namespace .. '/cols', collection_name))
   return col
 end
 
@@ -532,19 +526,38 @@ function Database:getCollection(collection_name)
   assertIsInstance(self, Database_mt, 'getCollection')
   return self.collections[collection_name] or setmetatable({
     db = self,
-    name = collection_name
+    red = self.red,
+    name = collection_name,
+    namespace = self.namespace .. '/cols/' .. collection_name
   }, Collection_mt)
 end
 
 ----------------------------------------------------------
 
-function modis.connect(red, options)
-  options = options or {}
-  return setmetatable({
-    red         = red,
-    name        = options.name or 'modis',
+local Connection = {}
+local Connection_mt = {__index = Connection, name = 'Connection'}
+
+function Connection:new_db_handle(database_name)
+  assertIsInstance(self, Connection_mt, 'new_db_handle')
+  assert(type(database_name) == 'string', 'Database name required')
+  self.databases[database_name] = self.databases[database_name ] or setmetatable({
+    red = self.red,
+    name = database_name,
+    namespace = self.namespace .. '/dbs/' .. database_name,
     collections = {}
   }, Database_mt)
+
+  return self.databases[database_name]
+end
+
+----------------------------------------------------------
+
+function modis.connect(red)
+  return setmetatable({
+    red         = red,
+    databases   = {},
+    namespace   = '/modis'
+  }, Connection_mt)
 end
 
 return modis

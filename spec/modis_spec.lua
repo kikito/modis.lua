@@ -2,14 +2,28 @@ local modis = require 'modis'
 local redis = require 'redis'
 
 describe('modis', function()
-  local db, red
+  local red, conn, db
   before_each(function()
-    red = redis.connect('127.0.0.1', 6379)
-    db  = modis.connect(red)
+    red  = redis.connect('127.0.0.1', 6379)
+    conn = modis.connect(red)
+    db   = conn:new_db_handle('test')
   end)
   after_each(function()
     db:dropDatabase()
     red:quit()
+  end)
+
+  describe('Connection', function()
+    describe(':new_db_handle', function()
+      it('returns a database', function()
+        local db2 = conn:new_db_handle('foo')
+        assert.is_truthy(db2)
+      end)
+      it('caches the database', function()
+        local db2 = conn:new_db_handle('test')
+        assert.equals(db, db2)
+      end)
+    end)
   end)
 
   describe('Database', function()
@@ -54,7 +68,7 @@ describe('modis', function()
     describe('when there is another database with the same name', function()
       local db2
       before_each(function()
-        db2 = modis.connect(red)
+        db2 = conn:new_db_handle('test')
       end)
       it('can have items added via the other db', function()
         db2.users:insert({name = 'peter'})
