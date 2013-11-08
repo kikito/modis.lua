@@ -283,8 +283,8 @@ local function getIndexKey(self, indexName, value)
 end
 
 local function removeIndex(self, id, indexName, value)
-  local db, red    = self.db, self.conn.red
-  local vtype      = type(value)
+  local red    = self.conn.red
+  local vtype  = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
     local key = getIndexKey(self, indexName, value)
@@ -299,21 +299,20 @@ local function removeIndex(self, id, indexName, value)
 
 end
 
-local function removeIndexes(self, id)
-  assert(id, 'please provide an id')
-  local db, red = self.db, self.conn.red
-  local doc = deserialize(red:get(self.namespace .. '/docs/' .. id))
+local function getDocById(self, id)
+  return deserialize(self.conn.red:get(self.namespace .. '/docs/' .. id))
+end
 
+local function removeIndexes(self, doc)
+  local id = doc._id
   for indexName, value in pairs(flatten(doc)) do
     removeIndex(self, id, indexName, value, 0)
   end
-
-  return doc
 end
 
 local function addIndex(self, id, indexName, value)
-  local db, red   = self.db, self.conn.red
-  local vtype     = type(value)
+  local red   = self.conn.red
+  local vtype = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
     local key = getIndexKey(self, indexName, value)
@@ -342,7 +341,7 @@ local function assertNumericOperatorType(indexName, operator, value)
 end
 
 local function findIdsMatchingIndex(self, indexName, value)
-  local db, red = self.db, self.conn.red
+  local red = self.conn.red
 
   local ids
   local vtype = type(value)
@@ -404,7 +403,7 @@ local function findIdsMatchingQuery(self, query, limit)
   query = query or {}
   limit = limit or math.huge
 
-  local db, red = self.db, self.conn.red
+  local red = self.conn.red
   local ids = red:smembers(self.namespace .. '/docs')
 
   for indexName,value in pairs(flatten(query)) do
@@ -446,7 +445,7 @@ function Collection:insert(doc)
     local id = new_doc._id
 
     local is_new = red:sismember(self.namespace .. '/docs', id)
-    if is_new then removeIndexes(self, id) end
+    if is_new then removeIndexes(self, new_doc) end
 
     red:sadd(self.namespace .. '/docs', id)
     red:set(self.namespace .. '/docs/' .. id, serialize(new_doc))
@@ -469,9 +468,10 @@ end
 
 function Collection:find(query, limit)
   assertIsInstance(self, Collection_mt, 'find')
-  local db, red = self.db, self.conn.red
+  local red  = self.conn.red
   local docs = {}
-  local ids = findIdsMatchingQuery(self, query, limit)
+  local ids  = findIdsMatchingQuery(self, query, limit)
+
   for i=1, #ids do
     local id = ids[i]
     local serialized = red:get(self.namespace .. '/docs/' .. id)
@@ -482,12 +482,13 @@ end
 
 function Collection:remove(query, justOne)
   assertIsInstance(self, Collection_mt, 'remove')
-  local db, red = self.db, self.conn.red
+  local red   = self.conn.red
   local limit = justOne and 1 or math.huge
-  local ids = findIdsMatchingQuery(self, query, limit)
+  local ids   = findIdsMatchingQuery(self, query, limit)
   for i=1,#ids do
     local id = ids[i]
-    removeIndexes(self, id)
+    local doc = getDocById(self, id)
+    removeIndexes(self, doc)
     red:del(self.namespace .. '/docs/' .. id)
     red:srem(self.namespace .. '/docs', id)
   end
@@ -499,11 +500,11 @@ function Collection:update(query, modifications)
 
   local ids = findIdsMatchingQuery(self, query, limit)
   for i=1, #ids do
-    local id = ids[i]
-
+    local id  = ids[i]
     local key = self.namespace .. '/docs/' .. id
+    local doc = getDocById(self, id)
+    removeIndexes(self, doc)
 
-    local doc = removeIndexes(self, id)
     table_merge(doc, modifications)
     red:set(key, serialize(doc))
     addIndexes(self, doc)
