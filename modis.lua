@@ -283,7 +283,7 @@ local function getIndexKey(self, indexName, value)
 end
 
 local function removeIndex(self, id, indexName, value)
-  local db, red    = self.db, self.red
+  local db, red    = self.db, self.conn.red
   local vtype      = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
@@ -301,7 +301,7 @@ end
 
 local function removeIndexes(self, id)
   assert(id, 'please provide an id')
-  local db, red = self.db, self.red
+  local db, red = self.db, self.conn.red
   local doc = deserialize(red:get(self.namespace .. '/docs/' .. id))
 
   for indexName, value in pairs(flatten(doc)) do
@@ -310,7 +310,7 @@ local function removeIndexes(self, id)
 end
 
 local function addIndex(self, id, indexName, value)
-  local db, red   = self.db, self.red
+  local db, red   = self.db, self.conn.red
   local vtype     = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
@@ -340,7 +340,7 @@ local function assertNumericOperatorType(indexName, operator, value)
 end
 
 local function findIdsMatchingIndex(self, indexName, value)
-  local db, red = self.db, self.red
+  local db, red = self.db, self.conn.red
 
   local ids
   local vtype = type(value)
@@ -402,7 +402,7 @@ local function findIdsMatchingQuery(self, query, limit)
   query = query or {}
   limit = limit or math.huge
 
-  local db, red = self.db, self.red
+  local db, red = self.db, self.conn.red
   local ids = red:smembers(self.namespace .. '/ids')
 
   for indexName,value in pairs(flatten(query)) do
@@ -415,18 +415,18 @@ end
 
 function Collection:exists()
   assertIsInstance(self, Collection_mt, 'exists')
-  return self.red:sismember(self.db.namespace .. '/cols', self.name)
+  return self.conn.red:sismember(self.db.namespace .. '/cols', self.name)
 end
 
 function Collection:count()
   assertIsInstance(self, Collection_mt, 'count')
-  return self.red:scard(self.namespace .. '/ids')
+  return self.conn.red:scard(self.namespace .. '/ids')
 end
 
 function Collection:insert(doc)
   assertIsInstance(self, Collection_mt, 'insert')
 
-  local db, red = self.db, self.red
+  local db, red = self.db, self.conn.red
   local docs = isArray(doc) and doc or {doc}
 
   db:createCollection(self.name)
@@ -448,7 +448,7 @@ end
 
 function Collection:drop()
   assertIsInstance(self, Collection_mt, 'drop')
-  local db, red = self.db, self.red
+  local db, red = self.db, self.conn.red
   red:srem(db.namespace .. '/cols', self.name)
   local script = ([[
     for _,k in ipairs(redis.call('keys', '%s*')) do
@@ -461,7 +461,7 @@ end
 
 function Collection:find(query, limit)
   assertIsInstance(self, Collection_mt, 'find')
-  local db, red = self.db, self.red
+  local db, red = self.db, self.conn.red
   local docs = {}
   local ids = findIdsMatchingQuery(self, query, limit)
   for i=1, #ids do
@@ -474,7 +474,7 @@ end
 
 function Collection:remove(query, justOne)
   assertIsInstance(self, Collection_mt, 'remove')
-  local db, red = self.db, self.red
+  local db, red = self.db, self.conn.red
   local limit = justOne and 1 or math.huge
   local ids = findIdsMatchingQuery(self, query, limit)
   for i=1,#ids do
@@ -504,12 +504,12 @@ function Database:dropDatabase()
       redis.call('del', k)
     end
   ]]):format(self.namespace)
-  return self.red:eval(script, 0)
+  return self.conn.red:eval(script, 0)
 end
 
 function Database:getCollectionNames()
   assertIsInstance(self, Database_mt, 'getCollectionNames')
-  local names = assert(self.red:smembers(self.namespace .. '/cols'))
+  local names = assert(self.conn.red:smembers(self.namespace .. '/cols'))
   table.sort(names)
   return names
 end
@@ -518,7 +518,7 @@ function Database:createCollection(collection_name)
   assertIsInstance(self, Database_mt, 'createCollection')
   local col = self:getCollection(collection_name)
   self.collections[collection_name] = col
-  assert(self.red:sadd(self.namespace .. '/cols', collection_name))
+  assert(self.conn.red:sadd(self.namespace .. '/cols', collection_name))
   return col
 end
 
@@ -526,7 +526,7 @@ function Database:getCollection(collection_name)
   assertIsInstance(self, Database_mt, 'getCollection')
   return self.collections[collection_name] or setmetatable({
     db = self,
-    red = self.red,
+    conn = self.conn,
     name = collection_name,
     namespace = self.namespace .. '/cols/' .. collection_name
   }, Collection_mt)
@@ -541,13 +541,18 @@ function Connection:new_db_handle(database_name)
   assertIsInstance(self, Connection_mt, 'new_db_handle')
   assert(type(database_name) == 'string', 'Database name required')
   self.databases[database_name] = self.databases[database_name ] or setmetatable({
-    red = self.red,
+    conn = self,
     name = database_name,
     namespace = self.namespace .. '/dbs/' .. database_name,
     collections = {}
   }, Database_mt)
 
   return self.databases[database_name]
+end
+
+function Connection:shutdown()
+  assertIsInstance(self, Connection_mt, 'shutdown')
+  self.red = nil
 end
 
 ----------------------------------------------------------
