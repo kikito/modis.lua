@@ -418,9 +418,14 @@ function Collection:exists()
   return self.conn.red:sismember(self.db.namespace .. '/cols', self.name)
 end
 
-function Collection:count()
+function Collection:count(query)
   assertIsInstance(self, Collection_mt, 'count')
-  return self.conn.red:scard(self.namespace .. '/ids')
+  query = query or {}
+  if isEmpty(query) then
+    return self.conn.red:scard(self.namespace .. '/ids')
+  else
+    return #findIdsMatchingQuery(self, query)
+  end
 end
 
 function Collection:insert(doc)
@@ -500,12 +505,15 @@ local Database_mt = {
 
 function Database:dropDatabase()
   assertIsInstance(self, Database_mt, 'dropDatabase')
+  local red = self.conn.red
+
+  red:srem(self.conn.namespace .. '/dbs', self.name)
   local script = ([[
-    for _,k in ipairs(redis.call('keys', '%s/*')) do
+    for _,k in ipairs(redis.call('keys', '%s*')) do
       redis.call('del', k)
     end
   ]]):format(self.namespace)
-  return self.conn.red:eval(script, 0)
+  red:eval(script, 0)
 end
 
 function Database:getCollectionNames()
