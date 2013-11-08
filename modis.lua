@@ -27,16 +27,8 @@ local modis = {
   ]]
 }
 
-local OPERATORS = {
-  ['$gt']  = 'comparison',
-  ['$gte'] = 'comparison',
-  ['$lt']  = 'comparison',
-  ['$lte'] = 'comparison',
-
-  ['$in']  = 'collection',
-  ['$all'] = 'collection',
-  ['$not'] = 'collection'
-}
+local OPERATORS = {}
+for op in ("$gt $gte $lt $lte $in $not"):gmatch("%$%w+") do OPERATORS[op] = true end
 
 local rep, concat, floor, max, min = string.rep, table.concat, math.floor, math.max, math.min
 
@@ -44,14 +36,25 @@ local function isEmpty(tbl)
   return next(tbl) == nil
 end
 
-local function isArray(array)
-  if type(array) ~= 'table' then return false end
+local function isArray(obj)
+  if type(obj) ~= 'table' then return false end
   local maximum, count = 0, 0
-  for k, _ in pairs(array) do
+  for k, _ in pairs(obj) do
     if type(k) ~= 'number' or k < 0 or floor(k) ~= k then return false end
     maximum, count = max(maximum, k), count + 1
   end
   return count == maximum
+end
+
+local function isArrayOfPrimitives(obj)
+  if not isArray(obj) then return false end
+  for i = 1, #obj do
+    local tvalue = type(obj[i])
+    if tvalue ~= 'string' and tvalue ~= 'number' and tvalue ~= 'boolean' then
+      return false
+    end
+  end
+  return true
 end
 
 -- This is a modification of ser - https://github.com/gvx/Ser, by Robin Wellner
@@ -246,7 +249,7 @@ local function hasOperators(doc)
 end
 
 local function recursive_flatten(doc, result, prefix)
-  if type(doc) ~= 'table' or isArray(doc) or hasOperators(doc) then
+  if type(doc) ~= 'table' or hasOperators(doc) or isArrayOfPrimitives(doc) then
     result[prefix] = doc
   else
     for k,v in pairs(doc) do
@@ -261,7 +264,6 @@ end
 local function flatten(doc)
   if type(doc) ~= 'table' then error('can not flatten non-tables: ' .. tostring(doc)) end
   if isEmpty(doc)         then return {} end
-  if isArray(doc)         then error('can not flatten arrays: {' .. table.concat(doc, ',') .. '}') end
   if hasOperators(doc)    then error('the provided docect had operators (such as $lt) on its first-level keys') end
   return recursive_flatten(doc, {})
 end
@@ -276,10 +278,9 @@ local function markAsExisting(self)
   assert(red:sadd(db.name .. '/cols', self.name))
 end
 
-local function getIndexKey(self, indexName, value, arrayLevel)
-  local arrayMark = rep('[]', arrayLevel)
+local function getIndexKey(self, indexName, value)
   local vtype     = type(value)
-  local key       = {self.db.name, '/cols/', self.name, '/index/', vtype, arrayMark, '?', indexName }
+  local key       = {self.db.name, '/cols/', self.name, '/index/', vtype, '?', indexName }
   if vtype ~= 'number' then
     local len = #key
     key[len+1], key[len+2] = '=', tostring(value)
@@ -287,20 +288,16 @@ local function getIndexKey(self, indexName, value, arrayLevel)
   return concat(key)
 end
 
-local function removeIndex(self, id, indexName, value, arrayLevel)
+local function removeIndex(self, id, indexName, value)
   local db, red    = self.db, self.db.red
   local vtype      = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
-    local key = getIndexKey(self, indexName, value, arrayLevel)
+    local key = getIndexKey(self, indexName, value)
     if vtype == 'number' then
       red:zrem(key, id)
     else --string or boolean
       red:srem(key, id)
-    end
-  elseif vtype == 'table' and isArray(value) then
-    for _,v in ipairs(value) do
-      removeIndex(self, id, indexName, v, arrayLevel + 1)
     end
   else
     error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
@@ -318,20 +315,16 @@ local function removeIndexes(self, id)
   end
 end
 
-local function addIndex(self, id, indexName, value, arrayLevel)
+local function addIndex(self, id, indexName, value)
   local db, red   = self.db, self.db.red
   local vtype     = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
-    local key = getIndexKey(self, indexName, value, arrayLevel)
+    local key = getIndexKey(self, indexName, value)
     if vtype == 'number' then
       red:zadd(key, value, id)
     else -- string or boolean
       red:sadd(key, id)
-    end
-  elseif vtype == 'table' and isArray(value) then
-    for _,v in ipairs(value) do
-      addIndex(self, id, indexName, v, arrayLevel + 1)
     end
   else
     error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
@@ -352,14 +345,14 @@ local function assertNumericOperatorType(indexName, operator, value)
   if vtype ~= 'number' then error(indexName .. '.' .. operator .. ' must be a number. Was ' .. tostring(value) .. '(' .. vtype .. ')') end
 end
 
-local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
+local function findIdsMatchingIndex(self, indexName, value)
   local db, red = self.db, self.db.red
 
   local ids
   local vtype = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
-    local key = getIndexKey(self, indexName, value, arrayLevel)
+    local key = getIndexKey(self, indexName, value)
     if vtype == 'number' then
       ids = red:zrangebyscore(key, value, value)
     else --string or boolean
@@ -368,8 +361,8 @@ local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
   elseif vtype == 'table' then
     if     isEmpty(value) then
       error('value in ' .. indexName .. ' can not be an empty table')
-    elseif isArray(value) then
-      ids = findIdsMatchingIndex(self, indexName, {['$in'] = value}, arrayLevel)
+    elseif isArrayOfPrimitives(value) then
+      ids = findIdsMatchingIndex(self, indexName, {['$in'] = value})
     elseif hasOperators(value) then
       if value['$lt'] or value['$lte'] or value['$gt'] or value['$gte'] then
         local lt, lte, gt, gte = value['$lt'], value['$lte'], value['$gt'], value['$gte']
@@ -382,7 +375,7 @@ local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
         local rmin = (gt and "(" .. tostring(gt)) or gte or "-inf"
         local rmax = (lt and "(" .. tostring(lt)) or lte or "+inf"
 
-        local key = getIndexKey(self, indexName, 0, arrayLevel) -- Use 0 to get a numeric key
+        local key = getIndexKey(self, indexName, 0) -- Use 0 to get a numeric key
         ids = red:zrangebyscore(key, rmin, rmax)
 
       elseif value['$in'] then
@@ -391,37 +384,21 @@ local function findIdsMatchingIndex(self, indexName, value, arrayLevel)
         if not isArray(value_in) then error('expected array after $in operator in ' .. indexName) end
         ids = {}
         for i = 1, #value_in do
-          ids = array_union(ids, findIdsMatchingIndex(self, indexName, value_in[i], arrayLevel))
-        end
-
-      elseif value['$all'] then
-
-        local value_all = value['$all']
-        if not isArray(value_all) then error('expected array after $all operator in ' .. indexName) end
-        if isEmpty(value_all) then
-          ids = {}
-        else
-          ids = findIdsMatchingIndex(self, indexName, value_all[1], arrayLevel + 1)
-          for i = 2, #value_all do
-            if isEmpty(ids) then break end
-            ids = array_intersect(ids, findIdsMatchingIndex(self, indexName, value_all[i], arrayLevel + 1))
-          end
+          ids = array_union(ids, findIdsMatchingIndex(self, indexName, value_in[i]))
         end
 
       elseif value['$not'] then
 
-        local not_ids = findIdsMatchingIndex(self, indexName, value['$not'], arrayLevel)
+        local not_ids = findIdsMatchingIndex(self, indexName, value['$not'])
         local all_ids = red:smembers(db.name .. '/cols/' .. self.name .. '/ids')
         ids = array_difference(all_ids, not_ids)
 
-      else
-        error('unknown operator')
       end
     else
-      error ('could not parse table value in ' .. indexName)
+      error('expected an array of primitives or a table with operators in ' .. indexName)
     end
   else
-    error ('unknown value type in ' .. indexName .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+    error('unknown value type in ' .. indexName .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
   end
 
   return ids
