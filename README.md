@@ -11,7 +11,8 @@ Interface
 
     local red = <initialize redis connection>
 
-    local db = modis.connect(red)
+    local conn = modis.connect(red)
+    local db = conn.getDatabase('test')
 
     -- create two documents in the collection 'users'
     db.users.insert({name = 'peter', age = 52, groups = {'bowling', 'pub'} })
@@ -27,6 +28,7 @@ Interface
     -- find users by other fields
     local megan      = db.users.find({age = {['$lt'] = 17 }})[1]
     local also_megan = db.users.find({groups = {['$in'] = {'ignred'}}})[1]
+    local megan_too  = db.users.findOne({name = 'megan'}) -- findOne does not require [1]
 
     -- You don't need to close db, but you need to close red
     red:close()
