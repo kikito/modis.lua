@@ -366,7 +366,18 @@ end
 
 ----------------------------------------------------------
 local Cursor = {}
-local Cursor_mt = {__index = Cursor, name = 'Cursor'}
+local Cursor_mt = {
+  __index = function(cursor, method_name)
+    local method = Cursor[method_name]
+
+    if method then return method end
+    if type(method_name) == 'number' and method_name <= cursor._limit then
+      local id = cursor.ids[method_name]
+      if id then return getDocById(cursor.collection, id) end
+    end
+  end,
+  name = 'Cursor'
+}
 
 function newCursor(collection, query)
   local cursor = setmetatable({
