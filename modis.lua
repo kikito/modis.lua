@@ -371,7 +371,7 @@ local Cursor_mt = {
     local method = Cursor[method_name]
 
     if method then return method end
-    if type(method_name) == 'number' and method_name <= cursor._limit then
+    if type(method_name) == 'number' and method_name <= cursor:size() then
       local id = cursor.ids[method_name]
       if id then return getDocById(cursor.collection, id) end
     end
@@ -383,8 +383,10 @@ function newCursor(collection, query)
   local cursor = setmetatable({
     collection = collection,
     conn       = collection.conn,
-    query = query,
-    _limit = math.huge
+    query      = query,
+    pos        = 0,
+    _skip      = 0,
+    _limit     = math.huge
   }, Cursor_mt)
 
   cursor.ids = findIdsMatchingQuery(collection, query)
@@ -417,15 +419,40 @@ end
 
 function Cursor:forEach(f)
   assertIsInstance(self, Cursor_mt, 'forEach')
-  local red = self.conn.red
-  local ids = self.ids
-  for i=1, self:count() do
-    f(getDocById(self.collection, ids[i]))
+  while self:hasNext() do
+    f(self:next())
   end
 end
 
-function Cursor:count()
-  return math.min(#self.ids, self._limit)
+function Cursor:count(applySkipLimit)
+  assertIsInstance(self, Cursor_mt, 'count')
+  if applySkipLimit then return self:size() end
+  return #self.ids
+end
+
+function Cursor:size()
+  assertIsInstance(self, Cursor_mt, 'size')
+  return math.min(#self.ids, self._limit) - self._skip
+end
+
+function Cursor:next()
+  assertIsInstance(self, Cursor_mt, 'next')
+  if self:hasNext() then
+    self.pos = self.pos + 1
+    return getDocById(self.collection, self.ids[self.pos])
+  end
+  return nil
+end
+
+function Cursor:hasNext()
+  assertIsInstance(self, Cursor_mt, 'hasNext')
+  return self.pos < self:size()
+end
+
+function Cursor:skip(skip)
+  assertIsInstance(self, Cursor_mt, 'skip')
+  self._skip = skip
+  return self
 end
 
 ----------------------------------------------------------
