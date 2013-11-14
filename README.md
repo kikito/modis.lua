@@ -19,16 +19,41 @@ Interface
     db.users.insert({name = 'megan', age = 17, groups = {'ignored'} })
 
     -- find all users
+    -- note that find returns an cursor
     local all_users = db.users.find({})
 
     -- find the users by name
-    -- note that find returns an array
-    local peter = db.users.find({name = 'peter'})[1]
+    -- findOne returns the document
+    local peter = db.users.findOne({name = 'peter'})
 
     -- find users by other fields
     local megan      = db.users.find({age = {['$lt'] = 17 }})[1]
-    local also_megan = db.users.find({groups = {['$in'] = {'ignred'}}})[1]
+    local also_megan = db.users.find({groups = {['$in'] = {'ignored'}}})[1]
     local megan_too  = db.users.findOne({name = 'megan'}) -- findOne does not require [1]
+
+    -- Iterate over a cursor with forEach
+    db.users:find():forEach(function(user)
+      print(user.name)
+    end)
+
+    -- Iterate over a cursor with next + hasNext
+    local cursor = db.users:find()
+    while cursor:hasNext() do
+      print(cursor:next().name)
+    end
+
+    -- Iterate over a cursor with numbers
+    local cursor = db.users:find()
+    for i=1,cursor:count() do
+      print(cursor[i].name)
+    end
+
+    -- Update all users and add a new attribute
+    db.users:update({}, {stress = 'high'})
+
+    -- Update only some users
+    db.users:update({name='peter'}, {stress = 'low'})
+
 
     -- You don't need to close db, but you need to close red
     red:close()
