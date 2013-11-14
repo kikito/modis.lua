@@ -269,102 +269,20 @@ local function flatten(doc)
 end
 
 ----------------------------------------------------------
-local Cursor = {}
-local Cursor_mt = {__index = Cursor, name = 'Cursor'}
 
-function newCursor(collection, ids)
-  return setmetatable({
-    collection = collection,
-    conn = collection.conn,
-    ids = ids,
-    _limit = math.huge
-  }, Cursor_mt)
+local function getDocById(collection, id)
+  return deserialize(collection.conn.red:get(collection.namespace .. '/docs/' .. id))
 end
 
-function Cursor:toArray()
-  assertIsInstance(self, Cursor_mt, 'toArray')
-  local red = self.conn.red
-
-  local ids = self.ids
-  local docs = {}
-  for i=1, math.min(#ids, self._limit) do
-    local id = ids[i]
-    local serialized = red:get(self.collection.namespace .. '/docs/' .. id)
-    docs[i] = deserialize(serialized)
-  end
-  return docs
-end
-
-function Cursor:limit(limit)
-  assertIsInstance(self, Cursor_mt, 'limit')
-  self._limit = limit
-  return self
-end
-
-----------------------------------------------------------
-local Collection = {}
-local Collection_mt = {__index = Collection, name = 'Collection'}
-
-local function getIndexKey(self, indexName, value)
-  local vtype     = type(value)
-  local key       = {self.namespace, '/index/', vtype, '?', indexName }
+local function getIndexKey(collection, indexName, value)
+  local red    = collection.conn.red
+  local vtype  = type(value)
+  local key    = {collection.namespace, '/index/', vtype, '?', indexName }
   if vtype ~= 'number' then
     local len = #key
     key[len+1], key[len+2] = '=', tostring(value)
   end
   return concat(key)
-end
-
-local function removeIndex(self, id, indexName, value)
-  local red    = self.conn.red
-  local vtype  = type(value)
-
-  if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
-    local key = getIndexKey(self, indexName, value)
-    if vtype == 'number' then
-      red:zrem(key, id)
-    else --string or boolean
-      red:srem(key, id)
-    end
-  else
-    error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
-  end
-
-end
-
-local function getDocById(self, id)
-  return deserialize(self.conn.red:get(self.namespace .. '/docs/' .. id))
-end
-
-local function removeIndexes(self, doc)
-  local id = doc._id
-  for indexName, value in pairs(flatten(doc)) do
-    removeIndex(self, id, indexName, value, 0)
-  end
-end
-
-local function addIndex(self, id, indexName, value)
-  local red   = self.conn.red
-  local vtype = type(value)
-
-  if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
-    local key = getIndexKey(self, indexName, value)
-    if vtype == 'number' then
-      red:zadd(key, value, id)
-    else -- string or boolean
-      red:sadd(key, id)
-    end
-  else
-    error('unknown value type for object ' .. self.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
-  end
-end
-
-local function addIndexes(self, doc)
-  local id = doc._id
-
-  for indexName, value in pairs(flatten(doc)) do
-    addIndex(self, id, indexName, value, 0)
-  end
 end
 
 local function assertNumericOperatorType(indexName, operator, value)
@@ -373,14 +291,13 @@ local function assertNumericOperatorType(indexName, operator, value)
   if vtype ~= 'number' then error(indexName .. '.' .. operator .. ' must be a number. Was ' .. tostring(value) .. '(' .. vtype .. ')') end
 end
 
-local function findIdsMatchingIndex(self, indexName, value)
-  local red = self.conn.red
-
+local function findIdsMatchingIndex(collection, indexName, value)
+  local red           = collection.conn.red
+  local vtype         = type(value)
   local ids
-  local vtype = type(value)
 
   if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
-    local key = getIndexKey(self, indexName, value)
+    local key = getIndexKey(collection, indexName, value)
     if vtype == 'number' then
       ids = red:zrangebyscore(key, value, value)
     else --string or boolean
@@ -390,7 +307,7 @@ local function findIdsMatchingIndex(self, indexName, value)
     if     isEmpty(value) then
       error('value in ' .. indexName .. ' can not be an empty table')
     elseif isArrayOfPrimitives(value) then
-      ids = findIdsMatchingIndex(self, indexName, {['$in'] = value})
+      ids = findIdsMatchingIndex(collection, indexName, {['$in'] = value})
     elseif hasOperators(value) then
       if value['$lt'] or value['$lte'] or value['$gt'] or value['$gte'] then
         local lt, lte, gt, gte = value['$lt'], value['$lte'], value['$gt'], value['$gte']
@@ -403,7 +320,7 @@ local function findIdsMatchingIndex(self, indexName, value)
         local rmin = (gt and "(" .. tostring(gt)) or gte or "-inf"
         local rmax = (lt and "(" .. tostring(lt)) or lte or "+inf"
 
-        local key = getIndexKey(self, indexName, 0) -- Use 0 to get a numeric key
+        local key = getIndexKey(collection, indexName, 0) -- Use 0 to get a numeric key
         ids = red:zrangebyscore(key, rmin, rmax)
 
       elseif value['$in'] then
@@ -412,13 +329,13 @@ local function findIdsMatchingIndex(self, indexName, value)
         if not isArray(value_in) then error('expected array after $in operator in ' .. indexName) end
         ids = {}
         for i = 1, #value_in do
-          ids = array_union(ids, findIdsMatchingIndex(self, indexName, value_in[i]))
+          ids = array_union(ids, findIdsMatchingIndex(collection, indexName, value_in[i]))
         end
 
       elseif value['$not'] then
 
-        local not_ids = findIdsMatchingIndex(self, indexName, value['$not'])
-        local all_ids = red:smembers(self.namespace .. '/docs')
+        local not_ids = findIdsMatchingIndex(collection, indexName, value['$not'])
+        local all_ids = red:smembers(collection.namespace .. '/docs')
         ids = array_difference(all_ids, not_ids)
 
       end
@@ -432,19 +349,118 @@ local function findIdsMatchingIndex(self, indexName, value)
   return ids
 end
 
-local function findIdsMatchingQuery(self, query, limit)
+local function findIdsMatchingQuery(collection, query)
+  local red = collection.conn.red
   query = query or {}
-  limit = limit or math.huge
 
-  local red = self.conn.red
-  local ids = red:smembers(self.namespace .. '/docs')
+  local ids = red:smembers(collection.namespace .. '/docs')
 
   for indexName,value in pairs(flatten(query)) do
     if isEmpty(ids) then break end
-    ids = array_intersect(ids, findIdsMatchingIndex(self, indexName, value, 0))
+    local new_ids = findIdsMatchingIndex(collection, indexName, value)
+    ids = array_intersect(ids, new_ids)
   end
 
-  return array_truncate(ids, limit)
+  return ids
+end
+
+----------------------------------------------------------
+local Cursor = {}
+local Cursor_mt = {__index = Cursor, name = 'Cursor'}
+
+function newCursor(collection, query)
+  local cursor = setmetatable({
+    collection = collection,
+    conn       = collection.conn,
+    query = query,
+    _limit = math.huge
+  }, Cursor_mt)
+
+  cursor.ids = findIdsMatchingQuery(collection, query)
+
+  return cursor
+end
+
+local function identity(obj) return obj end
+
+function Cursor:toArray()
+  assertIsInstance(self, Cursor_mt, 'toArray')
+  return self:forEach(identity)
+end
+
+function Cursor:limit(limit)
+  assertIsInstance(self, Cursor_mt, 'limit')
+  self._limit = limit
+  return self
+end
+
+function Cursor:forEach(f)
+  assertIsInstance(self, Cursor_mt, 'forEach')
+  local red = self.conn.red
+  local ids = self.ids
+  local results, len = {}, 0
+  for i=1, self:count() do
+    local doc    = getDocById(self.collection, ids[i])
+    len          = len + 1
+    results[len] = doc
+    f(doc)
+  end
+  return results
+end
+
+function Cursor:count()
+  return math.min(#self.ids, self._limit)
+end
+
+----------------------------------------------------------
+local Collection = {}
+local Collection_mt = {__index = Collection, name = 'Collection'}
+
+local function removeIndex(collection, id, indexName, value)
+  local red    = collection.conn.red
+  local vtype  = type(value)
+
+  if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
+    local key = getIndexKey(collection, indexName, value)
+    if vtype == 'number' then
+      red:zrem(key, id)
+    else --string or boolean
+      red:srem(key, id)
+    end
+  else
+    error('unknown value type for object ' .. collection.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+  end
+end
+
+local function removeIndexes(collection, doc)
+  local id = doc._id
+  for indexName, value in pairs(flatten(doc)) do
+    removeIndex(collection, id, indexName, value)
+  end
+end
+
+local function addIndex(collection, id, indexName, value)
+  local red   = collection.conn.red
+  local vtype = type(value)
+
+  if vtype == 'string' or vtype == 'boolean' or vtype == 'number' then
+    local key = getIndexKey(collection, indexName, value)
+    if vtype == 'number' then
+      red:zadd(key, value, id)
+    else -- string or boolean
+      red:sadd(key, id)
+    end
+  else
+    error('unknown value type for object ' .. collection.name .. '/' .. tostring(id) .. '.' .. indexName  .. ': ' .. tostring(value) .. '(' .. tvalue .. ')')
+  end
+end
+
+local function addIndexes(collection, doc)
+  local id = doc._id
+
+  for indexName, value in pairs(flatten(doc)) do
+    addIndex(collection, id, indexName, value, 0)
+  end
 end
 
 function Collection:exists()
@@ -458,7 +474,7 @@ function Collection:count(query)
   if isEmpty(query) then
     return self.conn.red:scard(self.namespace .. '/docs')
   else
-    return #findIdsMatchingQuery(self, query)
+    return newCursor(self, query):count()
   end
 end
 
@@ -478,7 +494,7 @@ function Collection:insert(doc)
     local id = new_doc._id
 
     local is_new = red:sismember(self.namespace .. '/docs', id)
-    if is_new then removeIndexes(self, new_doc) end
+    if is_new then removeIndexes(red, self.namespace, new_doc) end
 
     red:sadd(self.namespace .. '/docs', id)
     red:set(self.namespace .. '/docs/' .. id, serialize(new_doc))
@@ -501,11 +517,7 @@ end
 
 function Collection:find(query)
   assertIsInstance(self, Collection_mt, 'find')
-
-  local red  = self.conn.red
-  local docs = {}
-  local ids  = findIdsMatchingQuery(self, query)
-  return newCursor(self, ids)
+  return newCursor(self, query)
 end
 
 function Collection:findOne(query)
@@ -515,33 +527,30 @@ end
 
 function Collection:remove(query, justOne)
   assertIsInstance(self, Collection_mt, 'remove')
-  local red   = self.conn.red
-  local limit = justOne and 1 or math.huge
-  local ids   = findIdsMatchingQuery(self, query, limit)
-  for i=1,#ids do
-    local id = ids[i]
-    local doc = getDocById(self, id)
+  local red       = self.conn.red
+  local namespace = self.namespace
+  local cursor    = newCursor(self, query)
+  if justOne then cursor:limit(1) end
+
+  cursor:forEach(function(doc)
     removeIndexes(self, doc)
-    red:del(self.namespace .. '/docs/' .. id)
-    red:srem(self.namespace .. '/docs', id)
-  end
+    red:del(namespace .. '/docs/' .. doc._id)
+    red:srem(namespace .. '/docs', doc._id)
+  end)
 end
 
 function Collection:update(query, modifications)
   assertIsInstance(self, Collection_mt, 'update')
   local red = self.conn.red
-
-  local ids = findIdsMatchingQuery(self, query, limit)
-  for i=1, #ids do
-    local id  = ids[i]
-    local key = self.namespace .. '/docs/' .. id
-    local doc = getDocById(self, id)
+  newCursor(self, query):forEach(function(doc)
+    local key = self.namespace .. '/docs/' .. doc._id
+    local doc = getDocById(self, doc._id)
     removeIndexes(self, doc)
 
     table_merge(doc, modifications)
     red:set(key, serialize(doc))
     addIndexes(self, doc)
-  end
+  end)
 end
 
 ----------------------------------------------------------
