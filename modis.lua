@@ -269,6 +269,39 @@ local function flatten(doc)
 end
 
 ----------------------------------------------------------
+local Cursor = {}
+local Cursor_mt = {__index = Cursor, name = 'Cursor'}
+
+function newCursor(collection, ids)
+  return setmetatable({
+    collection = collection,
+    conn = collection.conn,
+    ids = ids,
+    _limit = math.huge
+  }, Cursor_mt)
+end
+
+function Cursor:toArray()
+  assertIsInstance(self, Cursor_mt, 'toArray')
+  local red = self.conn.red
+
+  local ids = self.ids
+  local docs = {}
+  for i=1, math.min(#ids, self._limit) do
+    local id = ids[i]
+    local serialized = red:get(self.collection.namespace .. '/docs/' .. id)
+    docs[i] = deserialize(serialized)
+  end
+  return docs
+end
+
+function Cursor:limit(limit)
+  assertIsInstance(self, Cursor_mt, 'limit')
+  self._limit = limit
+  return self
+end
+
+----------------------------------------------------------
 local Collection = {}
 local Collection_mt = {__index = Collection, name = 'Collection'}
 
@@ -466,23 +499,18 @@ function Collection:drop()
   return red:eval(script, 0)
 end
 
-function Collection:find(query, limit)
+function Collection:find(query)
   assertIsInstance(self, Collection_mt, 'find')
+
   local red  = self.conn.red
   local docs = {}
-  local ids  = findIdsMatchingQuery(self, query, limit)
-
-  for i=1, #ids do
-    local id = ids[i]
-    local serialized = red:get(self.namespace .. '/docs/' .. id)
-    docs[i] = deserialize(serialized)
-  end
-  return docs
+  local ids  = findIdsMatchingQuery(self, query)
+  return newCursor(self, ids)
 end
 
 function Collection:findOne(query)
   assertIsInstance(self, Collection_mt, 'findOne')
-  return self:find(query, 1)[1]
+  return self:find(query):limit(1):toArray()[1]
 end
 
 function Collection:remove(query, justOne)
