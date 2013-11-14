@@ -385,7 +385,7 @@ local function identity(obj) return obj end
 
 function Cursor:toArray()
   assertIsInstance(self, Cursor_mt, 'toArray')
-  return self:forEach(identity)
+  return self:map(identity)
 end
 
 function Cursor:limit(limit)
@@ -394,18 +394,23 @@ function Cursor:limit(limit)
   return self
 end
 
+function Cursor:map(f)
+  assertIsInstance(self, Cursor_mt, 'map')
+  local result, len = {},0
+  self:forEach(function(doc)
+    len = len + 1
+    result[len] = f(doc)
+  end)
+  return result
+end
+
 function Cursor:forEach(f)
   assertIsInstance(self, Cursor_mt, 'forEach')
   local red = self.conn.red
   local ids = self.ids
-  local results, len = {}, 0
   for i=1, self:count() do
-    local doc    = getDocById(self.collection, ids[i])
-    len          = len + 1
-    results[len] = doc
-    f(doc)
+    f(getDocById(self.collection, ids[i]))
   end
-  return results
 end
 
 function Cursor:count()
