@@ -480,6 +480,11 @@ function Collection:find(query, limit)
   return docs
 end
 
+function Collection:findOne(query)
+  assertIsInstance(self, Collection_mt, 'findOne')
+  return self:find(query, 1)[1]
+end
+
 function Collection:remove(query, justOne)
   assertIsInstance(self, Collection_mt, 'remove')
   local red   = self.conn.red
