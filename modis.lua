@@ -532,8 +532,18 @@ function Collection:insert(doc)
 
   for _,doc in ipairs(docs) do
     local new_doc = table_merge({}, doc)
+    local max_id_key = self.namespace .. '/max_id'
 
-    new_doc._id = new_doc._id or self:count() + 1 -- FIXME not thread safe
+    if new_doc._id then
+      local max_id = tonumber(red:get(max_id_key) or 0)
+      -- FIXME possible concurrency issue between these two lines
+      if new_doc._id > max_id then
+        red:set(max_id_key, new_doc._id)
+      end
+    else
+      new_doc._id = tonumber(red:incr(max_id_key))
+    end
+
     local id = new_doc._id
 
     local is_new = red:sismember(self.namespace .. '/docs', id)
